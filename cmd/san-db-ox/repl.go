@@ -39,10 +39,10 @@ type repl struct {
 	mode        outputMode // .mode (format.go, Step 2); zero value behaves as modeList
 	headers     bool       // .headers (Step 2)
 
-	// interrupts (Step 6, interrupt.go) will be added here as
-	// *replInterrupts, non-nil only for an interactive session: SIGINT
-	// keeps its default (process-terminating) behavior for
-	// non-interactive/piped input, so it stays nil there.
+	// interrupts is non-nil only for an interactive session
+	// (interrupt.go): SIGINT keeps its default (process-terminating)
+	// behavior for non-interactive/piped input, so it stays nil there.
+	interrupts *replInterrupts
 
 	out  io.Writer
 	errw io.Writer
@@ -88,14 +88,57 @@ func runREPL(db *engine.DB, self string, in io.Reader, out, errw io.Writer, inte
 // -- dot commands are always a single line and only recognized when buf
 // is empty (sqlite3's own rule: a "." mid-statement is just SQL text,
 // e.g. inside a string literal).
+//
+// The line reader runs in its own goroutine (interrupt.go's
+// startLineReader) so this loop is never blocked inside a stdin read: it
+// can instead select between "a line arrived" and "an idle Ctrl+C
+// arrived". Only an interactive session installs a SIGINT handler at
+// all (spec §13); idleSig stays nil otherwise, which disables that case
+// of the select below (a nil channel blocks forever) and leaves SIGINT's
+// default (process-terminating) behavior in place for piped input.
 func (r *repl) run(in io.Reader) int {
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	lr := startLineReader(scanner)
+
+	var idleSig chan struct{}
+	if r.interactive {
+		var stop func()
+		r.interrupts, stop = newReplInterrupts()
+		defer stop()
+		idleSig = r.interrupts.idleSig
+	}
 
 	var buf strings.Builder
 	r.printPrompt(false)
-	for scanner.Scan() {
-		line := scanner.Text()
+	for {
+		var line string
+		select {
+		case l, ok := <-lr.lines:
+			if !ok {
+				if err := <-lr.err; err != nil {
+					fmt.Fprintln(r.errw, "Error:", err)
+				}
+				if r.interactive {
+					fmt.Fprintln(r.out)
+				}
+				return 0
+			}
+			line = l
+			if r.interrupts != nil {
+				r.interrupts.resetOnNewLine()
+			}
+		case <-idleSig:
+			// First Ctrl+C while idle (interrupt.go): discard whatever
+			// multi-line statement was being typed and redraw the
+			// prompt, matching sqlite3's own behavior. A second,
+			// consecutive press instead exits the process directly
+			// from onInterrupt, without going through this loop at all.
+			buf.Reset()
+			r.printPrompt(false)
+			continue
+		}
+
 		trimmed := strings.TrimSpace(line)
 
 		if buf.Len() == 0 && strings.HasPrefix(trimmed, ".") {
@@ -127,10 +170,6 @@ func (r *repl) run(in io.Reader) int {
 			r.printPrompt(true)
 		}
 	}
-	if r.interactive {
-		fmt.Fprintln(r.out)
-	}
-	return 0
 }
 
 // printPrompt writes prompt or continuationPrompt, but only for an
@@ -185,8 +224,19 @@ func (r *repl) splitComplete(text string) (stmts []string, remainder string) {
 // zero columns and prints nothing. Statements that do return columns are
 // rendered in r.mode (format.go's printRows) -- list by default,
 // matching sqlite3's own ".mode list".
+//
+// The statement's context is registered with r.interrupts (when
+// interactive) for the duration of the call, so a Ctrl+C while it is
+// running cancels it instead of terminating the process (interrupt.go).
+// engine's TestSessionSurvivesCanceledQuery already established that a
+// Session stays usable after a canceled query.
 func (r *repl) execSQL(stmt string) {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if r.interrupts != nil {
+		defer r.interrupts.begin(cancel)()
+	}
+
 	rows, err := r.sess.QueryContext(ctx, stmt)
 	if err != nil {
 		fmt.Fprintln(r.errw, "Error:", err)
