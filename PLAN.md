@@ -72,60 +72,76 @@ importしていないことをCIが検証している。
 
 ## 現在地
 
-**フェーズ①Step 3（`engine`パッケージ最小実装）完了。** `cmd/san-db-ox` は
-まだ存在しない（Step 4で着手）。
+**フェーズ①Step 4（`cmd/san-db-ox` — CLI・バナー・REPL最小実装）完了。**
+フェーズ①の残りはStep 5（E2E自動化・CI）のみ。
 
 - **Step 1（足場固め）**: `go.mod`/`go.sum`（`modernc.org/sqlite v1.58.0`）・
-  `Makefile`・`.gitattributes`/`.gitignore`・`PostToolUse`フック。
-- **Step 2（技術検証スパイク）**: 既存の確定事項（上表）が
-  `modernc.org/sqlite v1.58.0` でも成立することを使い捨てスパイクで再確認、
-  未確認事項1番（`Serialize()`出力の妥当性）を解消。詳細は過去のコミット
-  （`33dcd41`）参照。
-- **Step 3（`engine`パッケージ最小実装）**: `engine/`に以下を実装。
-  - `footer.go`: 32バイト固定長フッターのエンコード/デコード
-    （`Magic`/`FooterSize`/`FormatVersion`/`MaxDataSize`を公開定数化、
-    パース結果自体は`footerInfo`として非公開——`Inspect`公開APIは
-    フェーズ②で追加）。
-  - `serialize.go`/`backup.go`: `conn.Raw()`型アサーションによる
-    `Serialize`/`Deserialize`/`NewBackup`到達、`loadBlobInto`
-    （使い捨て接続へDeserialize→Backup APIでkeeper接続の生きているDBへ
-    コピー、の2段構え）。
-  - `engine.go`: `DB`型（`mu`/`sdb`/`keeper`/`dsn`/`closed`）、
-    `Open`/`OpenSelf`/`Exec`/`ExecContext`/`Query`/`QueryContext`/
-    `QueryRow`/`QueryRowContext`/`Close`。`Open`は素のSQLiteファイルの
-    バイト列をそのままDeserializeする単純な実装（フッター判定はしない
-    ——それは`Load`の役目でフェーズ②）。DB名は`san-db-ox<連番>`で
-    プロセス内の複数DBインスタンスの衝突を避ける。
-  - `persist.go`: `Snapshot`/`Overwrite`。**設計判断:** `Snapshot`は
-    `Open`/`OpenSelf`のどちらで開いたかに依存せず、呼び出し時点の
-    `os.Executable()`を毎回読み直してエンジンバイトを決定する（仕様書§10
-    「ここでの『エンジンバイト』はホストアプリのバイナリ全体」との整合を
-    優先し、ExecDBが採用していた「Open時にsourcePath/engineSizeを
-    キャッシュする」方式は採らなかった——設計判断は別物、CLAUDE.md）。
-    `serializeBarrier`（`BEGIN IMMEDIATE`で書き込みロックを取ってから
-    `Serialize`する、torn snapshot防止）、`overwriteSelf`（rename退避→
-    新規書き込み→退避削除）、`looksLikeGoRunTempBinary`（`go run`の
-    一時バイナリを拒否）も実装。
-  - `errors.go`: `ErrClosed`/`ErrNotOverwritable`/`ErrBusy`/`ErrTooLarge`。
-  - テスト: `footer_test.go`/`engine_test.go`/`persist_test.go`
-    （20件、`go test`・`-race`とも green）。`.overwrite`の実挙動は
-    `go test`からは検証できない（testing.md）ため、ユニットテストでは
-    `overwriteSelf`を直接呼んで退避・書き込み・ロールバックの手順を検証し、
-    別途 `make build`相当の実バイナリ（使い捨てスパイク、削除済み）で
-    `OpenSelf`→`Overwrite`→再起動→`OpenSelf`のループを3周させ、データが
-    実際に永続化されること・退避ファイルが残らないことを実機確認した。
-  - `net`/`net/http`を直接importしていないことを確認済み（CI化はStep 5）。
+  `Makefile`・`.gitattributes`/`.gitignore`・`PostToolUse`フック
+  （コミット `529e2fd`）。
+- **Step 2（技術検証スパイク）**: 確定事項（上表）の再確認、未確認事項1番
+  （`Serialize()`出力の妥当性）を解消（コミット `33dcd41`）。
+- **Step 3（`engine`パッケージ最小実装）**: `footer.go`/`serialize.go`/
+  `backup.go`/`engine.go`/`persist.go`/`errors.go`。`DB`型、
+  `Open`/`OpenSelf`/`Exec`系/`Close`/`Snapshot`/`Overwrite`。
+  **設計判断:** `Snapshot`は`Open`/`OpenSelf`のどちらで開いたかに依存せず、
+  呼び出し時点の`os.Executable()`を毎回読み直してエンジンバイトを決定する
+  （仕様書§10「ここでの『エンジンバイト』はホストアプリのバイナリ全体」に
+  整合させるため、ExecDBの「Open時にsourcePath/engineSizeをキャッシュする」
+  方式とは意図的に変えた——設計判断は別物、CLAUDE.md）。ユニットテスト20件
+  （`go test`・`-race`ともgreen）＋実バイナリでの`OpenSelf`→`Overwrite`→
+  再起動ループの実機確認（コミット `c912358`）。
+- **Step 4（`cmd/san-db-ox`最小実装）**: `main.go`/`banner.go`/`repl.go`/
+  `dotcmd.go`/`filename.go`を実装。
+  - **起動:** 引数なしでREPL起動（`engine.OpenSelf()`）。`-h`/`--help`、
+    `-v`/`--version`のみ対応、それ以外の引数は使用法エラー（終了コード2）。
+    `-c`/`--serve-stdio`/`-i`/`-r`/`-m`/`-o`/`-t`/`-q`はすべて未実装
+    （後続フェーズ）。
+  - **バナー（仕様書§13）:** `engine.DB`に`HasData() bool`を追加
+    （`Open`/`OpenSelf`が実データを読み込んだ場合に`true`。`Inspect`/
+    `Info()`公開APIはフェーズ②で追加、Step 4のバナー実装に最小限必要な
+    ものだけ先に切り出した）。
+  - **REPLプロンプト:** `sandbox> `に確定（仕様書§0の表記スロット表・
+    未確認事項2番を参照）。
+  - **SQL実行方式:** `db.Query()`一本化で実測確認済み——DDL/DML/SELECTの
+    いずれも`Query()`が使え、非SELECT文は0カラムの空結果になるだけで
+    エラーにならない（modernc.org/sqlite実測）。出力は`.mode list`相当
+    （`|`区切り・ヘッダなし・NULLは空文字列）に固定、本格的な出力モード
+    切替はフェーズ③。
+  - **ドットコマンド（6種、共通処理として`dispatchDotCommand`に集約
+    ——directory-structure.mdの「3つの実行モードは同じドットコマンド
+    実装を共有する」原則を先取り）:** `.tables`/`.schema [TABLE]`/
+    `.snapshot [FILENAME]`（`--sqlite`/`--timestamp`は未対応、
+    ファイル名省略時は実行中バイナリ名をベースにカレントディレクトリへ
+    生成）/`.overwrite`/`.exit [CODE]`・`.quit [CODE]`/`.help`
+    （実装済みコマンドのみ列挙）。
+  - **テスト:** `filename_test.go`/`dotcmd_test.go`/`repl_test.go`
+    （`go test`・`-race`ともgreen）。`.snapshot`の既定ファイル名が
+    「実行ファイルの場所」ではなく「プロセスのカレントディレクトリ」
+    基準であることを`t.Chdir`で明示的に検証（testing.mdのe2e落とし穴
+    節と同じ注意点）。
+  - **実機確認（`.overwrite`）:** `make build`相当の実バイナリをコピーし、
+    REPL経由で`.overwrite`→再起動→`SELECT`→追記→`.overwrite`→再起動→
+    `SELECT`を3周実行。データの永続化・退避ファイル（`.san-db-ox.old`）が
+    残らないことを確認。`.snapshot`（名前省略・明示指定の両方）・
+    `-h`/`-v`/不正引数（終了コード2）・`.exit CODE`・EOF終了・`.quit`も
+    実機確認済み。
+  - **Makefile修正:** `build`ターゲットが`go build ./...`のままだと
+    複数パッケージ扱いになりバイナリが一切生成されないことが判明
+    （`go help build`: 複数パッケージ指定時は出力を捨てて構文チェックのみ）。
+    `go build -o san-db-ox ./cmd/san-db-ox`に修正。
 
-**次にやること:** フェーズ①Step 4（`cmd/san-db-ox` — CLI・バナー・REPL
-最小実装）。
+**次にやること:** フェーズ①Step 5（E2E自動化・CI）——`tests/e2e.sh`、
+GitHub Actions 3OSマトリクス（`test.yml`）、`net`/`net/http`非依存の検証を
+CI化、仕様書・ルールファイルへの確定事項の反映。
 
 ## 未確認事項（実装前に決める・確かめる）
 
 1. ~~`Serialize()` の出力が、そのまま有効なSQLiteファイルとして開けるか。~~
    **Step 2で解消（実測確認済み。仕様書§6参照）。**
-2. **REPLのプロンプト文字列。** 仕様書に記載がない。`sandbox> ` を仮置きして
-   いるが（`docs/usage/repl-commands_ja.md` の例）、製品名の表記規則
-   （`naming.md`）の第3段を使ってよいかを含めて決める必要がある。
+2. ~~REPLのプロンプト文字列。~~ **Step 4で解消。** `sandbox> ` に確定
+   （第3段——対話中に1行ごと手で打つ文字列という長さ制約。`sqlite3` CLI
+   自身が製品名ではなく`sqlite> `を使う前例と同じ理由）。仕様書§0の
+   表記スロット表に追記済み。
 3. **`.dump` と `.import` に stdio op を用意するか。** 仕様書§7のop一覧には
    無いが、「ドットコマンドはstdioでは対応するopとして提供する」と書いた
    手前、この2つだけが例外になる。意図的な非対応か、単なる漏れかを確定させる

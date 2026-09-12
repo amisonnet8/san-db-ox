@@ -30,11 +30,24 @@ var dbSeq int64
 // See docs/spec/san-db-ox_spec_ja.md §10-11 for the full design. The
 // zero value is not usable; construct a DB with Open or OpenSelf.
 type DB struct {
-	mu     sync.RWMutex
-	sdb    *sql.DB
-	keeper *sql.Conn // keeps the live memdb store alive; never used to run SQL
-	dsn    string    // this DB's live memdb DSN -- the backup destination in loadBlobInto
-	closed bool
+	mu      sync.RWMutex
+	sdb     *sql.DB
+	keeper  *sql.Conn // keeps the live memdb store alive; never used to run SQL
+	dsn     string    // this DB's live memdb DSN -- the backup destination in loadBlobInto
+	closed  bool
+	hasData bool // was this DB populated from embedded/file data at Open/OpenSelf time?
+}
+
+// HasData reports whether this DB was populated with data when it was
+// opened (spec §13's startup banner, stdio "inspect" op's has_data
+// field). It does not track whether the DB has since been written to;
+// it is set once, at Open/OpenSelf time. The fuller Inspect/Info API
+// (naming.md) belongs to a later phase -- this exists only because the
+// Phase 1 Step 4 REPL banner needs it now.
+func (db *DB) HasData() bool {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return db.hasData
 }
 
 // newLiveDB opens a fresh memdb-backed live database and returns a
@@ -90,6 +103,7 @@ func Open(path string) (*DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("engine: %s: %w", path, err)
 	}
+	db.hasData = true
 	return db, nil
 }
 
@@ -135,6 +149,7 @@ func OpenSelf() (*DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("engine: %s: %w", self, err)
 	}
+	db.hasData = true
 	return db, nil
 }
 

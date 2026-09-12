@@ -1,10 +1,12 @@
 .PHONY: build unit test check fmt fmt-check vet race clean
 
-# Compile check. Writes the san-db-ox binary to the repo root once
-# cmd/san-db-ox exists (see .claude/rules/directory-structure.md); until
-# then this just verifies that every package compiles.
+# Builds the san-db-ox binary to the repo root, and (via the same
+# dependency graph) verifies engine compiles too. `go build ./...` does
+# NOT do this: for more than one package it only checks compilability and
+# discards the output (see `go help build`), so the binary must be built
+# explicitly by import path.
 build:
-	go build ./...
+	go build -o san-db-ox ./cmd/san-db-ox
 
 # Go unit tests (engine package, footer I/O, etc).
 unit:

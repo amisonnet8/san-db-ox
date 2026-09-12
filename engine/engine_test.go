@@ -29,6 +29,9 @@ func TestOpenMissingFileIsEmpty(t *testing.T) {
 	if _, err := db.Exec("CREATE TABLE t (v TEXT)"); err != nil {
 		t.Fatalf("expected the empty DB to be writable: %v", err)
 	}
+	if db.HasData() {
+		t.Fatalf("HasData() = true for a missing-file Open, want false")
+	}
 }
 
 func TestOpenEmptyFileIsEmpty(t *testing.T) {
@@ -103,6 +106,9 @@ func TestOpenFromSerializedFile(t *testing.T) {
 	if v != "hello" {
 		t.Fatalf("v = %q, want %q", v, "hello")
 	}
+	if !db.HasData() {
+		t.Fatalf("HasData() = false after Open of a non-empty file, want true")
+	}
 
 	// The restored DB must stay writable (SQLITE_DESERIALIZE_RESIZEABLE),
 	// not just readable.
@@ -122,6 +128,9 @@ func TestOpenSelfNoEmbeddedData(t *testing.T) {
 	defer db.Close()
 	if cnt := tableCount(t, db); cnt != 0 {
 		t.Fatalf("table count = %d, want 0 (go test binary has no embedded data)", cnt)
+	}
+	if db.HasData() {
+		t.Fatalf("HasData() = true for a go test binary with no footer, want false")
 	}
 }
 
