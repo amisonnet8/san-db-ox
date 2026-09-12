@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/amisonnet8/san-db-ox/engine"
 )
 
 // handleDotCommand parses and runs one dot command, returning whether the
@@ -39,6 +41,8 @@ func (r *repl) handleDotCommand(line string) (exit bool, code int) {
 		if err = r.cmdOverwrite(); err == nil {
 			exit = true
 		}
+	case ".load":
+		err = r.cmdLoad(args)
 	case ".exit", ".quit":
 		exit, code, err = cmdExit(args)
 	case ".help":
@@ -135,25 +139,76 @@ func (r *repl) cmdHeaders(args []string) error {
 	return nil
 }
 
-// cmdSnapshot implements ".snapshot [FILENAME]": save a new executable
-// carrying the current data (spec §4). With no FILENAME, the base name
-// defaults to -o/--snapshot-as if the process was started with one,
-// otherwise the running executable's own name (naming.md's table,
-// "ファイル名省略、実行中バイナリ名がベース"; defaultSnapshotBase,
-// filename.go). The startup -t/--timestamp default applies unless
-// overridden by this call's own --timestamp (Step 4 adds --sqlite and a
-// per-call --timestamp override).
+// cmdSnapshot implements ".snapshot [FILENAME] [--sqlite] [--timestamp]"
+// (spec §4, §6): save a new executable carrying the current data, or
+// (--sqlite) a plain SQLite file instead. FILENAME and the two flags may
+// appear in any order (matching the spec's own examples,
+// ".snapshot bug_123 --timestamp" / ".snapshot bug_123 --sqlite
+// --timestamp"). With no FILENAME, the base name defaults to
+// -o/--snapshot-as if the process was started with one, otherwise the
+// running executable's own name (naming.md's table, "ファイル名省略、
+// 実行中バイナリ名がベース"; defaultSnapshotBase, filename.go). --timestamp
+// here overrides (never merely ORs with) the startup -t/--timestamp
+// default, matching spec §12: "その場で上書き指定できる".
 func (r *repl) cmdSnapshot(args []string) error {
-	base := defaultSnapshotBase(r.self, r.opts)
-	if len(args) > 0 {
-		base = args[0]
+	filename := ""
+	asSQLite := false
+	withTimestamp := r.opts != nil && r.opts.timestamp
+	for _, a := range args {
+		switch a {
+		case "--sqlite":
+			asSQLite = true
+		case "--timestamp":
+			withTimestamp = true
+		default:
+			if filename != "" {
+				return fmt.Errorf("usage: .snapshot [FILENAME] [--sqlite] [--timestamp]")
+			}
+			filename = a
+		}
 	}
-	path := snapshotFilename(base, r.opts != nil && r.opts.timestamp, false, time.Now(), runtime.GOOS)
 
-	if err := r.db.Snapshot(path); err != nil {
+	base := filename
+	if base == "" {
+		base = defaultSnapshotBase(r.self, r.opts)
+	}
+	path := snapshotFilename(base, withTimestamp, asSQLite, time.Now(), runtime.GOOS)
+
+	var err error
+	if asSQLite {
+		err = r.db.Export(path)
+	} else {
+		err = r.db.Snapshot(path)
+	}
+	if err != nil {
 		return err
 	}
 	fmt.Fprintf(r.out, "Wrote %s\n", path)
+	return nil
+}
+
+// cmdLoad implements ".load FILE" (spec §4, §6): replace the in-memory
+// DB with the data in FILE (a SanDBox executable or a plain SQLite
+// file, auto-detected). A footer format-Version mismatch is a warning,
+// not a rejection (spec §4: "警告を表示した上で処理を続行する"); engine
+// itself never logs (§10's division of responsibility), so cmd calls
+// Inspect itself to detect this before Load runs. Inspect failing here
+// (a missing file, a directory, ...) is not itself reported -- db.Load
+// below fails on the same input and surfaces a clearer error for it.
+func (r *repl) cmdLoad(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: .load FILENAME")
+	}
+	path := args[0]
+
+	if info, err := engine.Inspect(path); err == nil && info.HasData && info.Version != engine.FormatVersion {
+		fmt.Fprintf(r.errw, "Warning: %s has SanDBox format version %d; this build is version %d.\n", path, info.Version, engine.FormatVersion)
+	}
+
+	if err := r.db.Load(path); err != nil {
+		return err
+	}
+	fmt.Fprintf(r.out, "Loaded data from %s\n", path)
 	return nil
 }
 
@@ -189,8 +244,11 @@ func cmdHelp(out interface{ Write([]byte) (int, error) }) {
 .schema [TABLE]         Show CREATE statements
 .mode MODE              Set output mode: list|column|csv|json|line
 .headers on|off         Show column names in output
-.snapshot [FILENAME]    Save a new executable with the current data
+.snapshot [FILE] [--sqlite] [--timestamp]
+                        Save the current data as a new executable, or
+                        (--sqlite) a plain SQLite file
 .overwrite              Save into this executable and exit
+.load FILE              Replace the in-memory database with FILE's data
 .exit [CODE]            Exit (alias: .quit)
 .help                   Show this message
 `)

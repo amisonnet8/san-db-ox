@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -146,6 +147,163 @@ func TestCmdSnapshotDefaultAndExplicitName(t *testing.T) {
 	}
 }
 
+// TestCmdSnapshotSQLiteFlag confirms "--sqlite" routes through
+// db.Export (a plain SQLite file, .sqlite extension completion) instead
+// of db.Snapshot (spec §4, §6).
+func TestCmdSnapshotSQLiteFlag(t *testing.T) {
+	db := newTestDB(t)
+	if _, err := db.Exec("CREATE TABLE t(x)"); err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var out, errw bytes.Buffer
+	r := newTestRepl(t, db, "self", &out, &errw)
+	if err := r.cmdSnapshot([]string{"mydb", "--sqlite"}); err != nil {
+		t.Fatalf("cmdSnapshot --sqlite: %v", err)
+	}
+	want := "mydb.sqlite"
+	if _, err := os.Stat(filepath.Join(dir, want)); err != nil {
+		t.Fatalf("expected a SQLite file at %s: %v", want, err)
+	}
+	if !strings.Contains(out.String(), want) {
+		t.Fatalf("cmdSnapshot output = %q, want it to mention %q", out.String(), want)
+	}
+}
+
+// TestCmdSnapshotTimestampFlag confirms a per-call "--timestamp"
+// produces a "_YYYYMMDDHHMMSS"-suffixed filename (naming.md), overriding
+// the (unset, here) startup -t default.
+func TestCmdSnapshotTimestampFlag(t *testing.T) {
+	db := newTestDB(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var out, errw bytes.Buffer
+	r := newTestRepl(t, db, "self", &out, &errw)
+	if err := r.cmdSnapshot([]string{"mydb", "--timestamp"}); err != nil {
+		t.Fatalf("cmdSnapshot --timestamp: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected exactly one file in %s, got %v", dir, entries)
+	}
+	if !timestampSuffixPattern.MatchString(strings.TrimSuffix(entries[0].Name(), filepath.Ext(entries[0].Name()))) {
+		t.Fatalf("filename %q does not carry a _YYYYMMDDHHMMSS suffix", entries[0].Name())
+	}
+}
+
+// TestCmdSnapshotFlagsAndFilenameInAnyOrder confirms both spec §12
+// examples work: ".snapshot NAME --timestamp" and
+// ".snapshot NAME --sqlite --timestamp" -- the flags and the filename
+// may appear in any order.
+func TestCmdSnapshotFlagsAndFilenameInAnyOrder(t *testing.T) {
+	db := newTestDB(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var out, errw bytes.Buffer
+	r := newTestRepl(t, db, "self", &out, &errw)
+	if err := r.cmdSnapshot([]string{"--sqlite", "--timestamp", "bug_123"}); err != nil {
+		t.Fatalf("cmdSnapshot: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || !strings.HasPrefix(entries[0].Name(), "bug_123_") || !strings.HasSuffix(entries[0].Name(), ".sqlite") {
+		t.Fatalf("expected one bug_123_<timestamp>.sqlite file, got %v", entries)
+	}
+}
+
+// TestCmdLoadReplacesState confirms ".load" fully replaces (not merges)
+// the live DB's state (spec §4).
+func TestCmdLoadReplacesState(t *testing.T) {
+	src := newTestDB(t)
+	if _, err := src.Exec("CREATE TABLE t(x); INSERT INTO t VALUES (1)"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "src")
+	if err := src.Snapshot(path); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := newTestDB(t)
+	if _, err := dst.Exec("CREATE TABLE other(y)"); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errw bytes.Buffer
+	r := newTestRepl(t, dst, "self", &out, &errw)
+	if err := r.cmdLoad([]string{path}); err != nil {
+		t.Fatalf("cmdLoad: %v", err)
+	}
+	if errw.Len() != 0 {
+		t.Fatalf("unexpected warning for a matching format version: %q", errw.String())
+	}
+	if !strings.Contains(out.String(), path) {
+		t.Fatalf("cmdLoad output = %q, want it to mention %q", out.String(), path)
+	}
+
+	var cnt int
+	if err := dst.QueryRow("SELECT count(*) FROM t").Scan(&cnt); err != nil {
+		t.Fatalf("t should exist after Load: %v", err)
+	}
+	if cnt != 1 {
+		t.Fatalf("row count = %d, want 1", cnt)
+	}
+	if _, err := dst.Query("SELECT * FROM other"); err == nil {
+		t.Fatal("expected table 'other' to be gone after Load (full replace, not merge)")
+	}
+}
+
+// TestCmdLoadWarnsOnVersionMismatch confirms the spec §4 footer
+// Version-mismatch warning: a real snapshot's footer Version field is
+// patched to a different value (the format footer.go documents: trailing
+// 32 bytes, Magic(8)+Version(4 big-endian)+..., so the Version field
+// starts at size-24) rather than requiring an actual different build.
+func TestCmdLoadWarnsOnVersionMismatch(t *testing.T) {
+	db := newTestDB(t)
+	if _, err := db.Exec("CREATE TABLE t(x)"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "old")
+	if err := db.Snapshot(path); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := f.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf [4]byte
+	binary.BigEndian.PutUint32(buf[:], engine.FormatVersion+99)
+	if _, err := f.WriteAt(buf[:], info.Size()-24); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errw bytes.Buffer
+	r := newTestRepl(t, db, "self", &out, &errw)
+	if err := r.cmdLoad([]string{path}); err != nil {
+		t.Fatalf("cmdLoad: %v", err)
+	}
+	if !strings.Contains(errw.String(), "Warning:") || !strings.Contains(errw.String(), "format version") {
+		t.Fatalf("expected a version-mismatch warning, got %q", errw.String())
+	}
+}
+
 func TestCmdExit(t *testing.T) {
 	exit, code, err := cmdExit(nil)
 	if err != nil || !exit || code != 0 {
@@ -213,12 +371,12 @@ func TestHandleDotCommandOverwriteInGoTest(t *testing.T) {
 func TestCmdHelpListsOnlyImplementedCommands(t *testing.T) {
 	var out bytes.Buffer
 	cmdHelp(&out)
-	for _, want := range []string{".tables", ".schema", ".mode", ".headers", ".snapshot", ".overwrite", ".exit", ".help"} {
+	for _, want := range []string{".tables", ".schema", ".mode", ".headers", ".snapshot", ".overwrite", ".load", ".exit", ".help"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("cmdHelp output missing %q", want)
 		}
 	}
-	for _, notYet := range []string{".load", ".import", ".dump"} {
+	for _, notYet := range []string{".import", ".dump"} {
 		if strings.Contains(out.String(), notYet) {
 			t.Errorf("cmdHelp output should not advertise unimplemented %q yet", notYet)
 		}
