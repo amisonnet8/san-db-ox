@@ -22,13 +22,6 @@ const prompt = "SanDBox> "
 // prompt).
 const continuationPrompt = "   ...> "
 
-// outputMode is a stub until Phase 3 Step 2 (format.go) introduces the
-// full set (list/column/csv/json/line) and moves this declaration there.
-// Only modeList exists for now, matching Phase 1's fixed output style.
-type outputMode string
-
-const modeList outputMode = "list"
-
 // repl holds everything one REPL run needs across the lifetime of the
 // process: the DB-level handle (for .snapshot/.overwrite/.load, which
 // replace or persist the whole live database), the one Session this REPL
@@ -183,7 +176,9 @@ func (r *repl) splitComplete(text string) (stmts []string, remainder string) {
 
 // execSQL runs one already-complete statement on r.sess, choosing Query
 // over Exec so a non-row-returning statement (DDL/DML) simply yields
-// zero columns and prints nothing (spec §3's default "list" style).
+// zero columns and prints nothing. Statements that do return columns are
+// rendered in r.mode (format.go's printRows) -- list by default,
+// matching sqlite3's own ".mode list".
 func (r *repl) execSQL(stmt string) {
 	ctx := context.Background()
 	rows, err := r.sess.QueryContext(ctx, stmt)
@@ -201,47 +196,5 @@ func (r *repl) execSQL(stmt string) {
 	if len(cols) == 0 {
 		return
 	}
-
-	vals := make([]any, len(cols))
-	ptrs := make([]any, len(cols))
-	for i := range vals {
-		ptrs[i] = &vals[i]
-	}
-	for rows.Next() {
-		if err := rows.Scan(ptrs...); err != nil {
-			fmt.Fprintln(r.errw, "Error:", err)
-			return
-		}
-		fmt.Fprintln(r.out, formatRow(vals))
-	}
-	if err := rows.Err(); err != nil {
-		fmt.Fprintln(r.errw, "Error:", err)
-	}
-}
-
-// formatRow and formatValue implement "list" mode only, for now
-// (Phase 1's original, still-default format). Phase 3 Step 2 (format.go)
-// replaces these with the full 5-mode printRows and moves this logic
-// there.
-func formatRow(vals []any) string {
-	parts := make([]string, len(vals))
-	for i, v := range vals {
-		parts[i] = formatValue(v)
-	}
-	return strings.Join(parts, "|")
-}
-
-// formatValue renders one column value in "list" mode: NULL as an empty
-// string, BLOB ([]byte) as its raw bytes (matching sqlite3 CLI's own
-// list-mode behavior -- .claude/rules/cli-output.md: "迷ったらsqlite3
-// コマンドの挙動を確認し"), everything else via fmt's default verb.
-func formatValue(v any) string {
-	switch x := v.(type) {
-	case nil:
-		return ""
-	case []byte:
-		return string(x)
-	default:
-		return fmt.Sprint(x)
-	}
+	r.printRows(rows, cols)
 }

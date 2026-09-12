@@ -212,12 +212,12 @@ func TestHandleDotCommandOverwriteInGoTest(t *testing.T) {
 func TestCmdHelpListsOnlyImplementedCommands(t *testing.T) {
 	var out bytes.Buffer
 	cmdHelp(&out)
-	for _, want := range []string{".tables", ".schema", ".snapshot", ".overwrite", ".exit", ".help"} {
+	for _, want := range []string{".tables", ".schema", ".mode", ".headers", ".snapshot", ".overwrite", ".exit", ".help"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("cmdHelp output missing %q", want)
 		}
 	}
-	for _, notYet := range []string{".load", ".import", ".dump", ".mode", ".headers"} {
+	for _, notYet := range []string{".load", ".import", ".dump"} {
 		if strings.Contains(out.String(), notYet) {
 			t.Errorf("cmdHelp output should not advertise unimplemented %q yet", notYet)
 		}

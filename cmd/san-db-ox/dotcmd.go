@@ -29,6 +29,10 @@ func (r *repl) handleDotCommand(line string) (exit bool, code int) {
 		err = r.cmdTables()
 	case ".schema":
 		err = r.cmdSchema(args)
+	case ".mode":
+		err = r.cmdMode(args)
+	case ".headers":
+		err = r.cmdHeaders(args)
 	case ".snapshot":
 		err = r.cmdSnapshot(args)
 	case ".overwrite":
@@ -95,6 +99,42 @@ func (r *repl) cmdSchema(args []string) error {
 	return rows.Err()
 }
 
+// cmdMode implements ".mode MODE" (spec §3). Switching into column mode
+// turns headers on automatically, matching sqlite3 -- a bare table of
+// values with no header row is a lot less useful in column mode, where
+// the whole point is readable alignment. headers can still be turned
+// back off explicitly afterward (spec §3's .mode/.headers table).
+func (r *repl) cmdMode(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: .mode MODE (list|column|csv|json|line)")
+	}
+	mode := outputMode(strings.ToLower(args[0]))
+	if !validOutputModes[mode] {
+		return fmt.Errorf("unknown mode %q. available modes: list, column, csv, json, line", args[0])
+	}
+	r.mode = mode
+	if mode == modeColumn {
+		r.headers = true
+	}
+	return nil
+}
+
+// cmdHeaders implements ".headers on|off" (spec §3).
+func (r *repl) cmdHeaders(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf(`usage: .headers on|off`)
+	}
+	switch strings.ToLower(args[0]) {
+	case "on":
+		r.headers = true
+	case "off":
+		r.headers = false
+	default:
+		return fmt.Errorf("expected \"on\" or \"off\", got %q", args[0])
+	}
+	return nil
+}
+
 // cmdSnapshot implements ".snapshot [FILENAME]": save a new executable
 // carrying the current data (spec §4). With no FILENAME, the base name
 // defaults to the running executable's own name (naming.md's table,
@@ -144,6 +184,8 @@ func cmdExit(args []string) (exit bool, code int, err error) {
 func cmdHelp(out interface{ Write([]byte) (int, error) }) {
 	fmt.Fprint(out, `.tables                 List tables
 .schema [TABLE]         Show CREATE statements
+.mode MODE              Set output mode: list|column|csv|json|line
+.headers on|off         Show column names in output
 .snapshot [FILENAME]    Save a new executable with the current data
 .overwrite              Save into this executable and exit
 .exit [CODE]            Exit (alias: .quit)
