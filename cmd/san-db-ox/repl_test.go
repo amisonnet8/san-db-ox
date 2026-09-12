@@ -251,6 +251,33 @@ func TestRunREPLExitsOnEOFWithoutExitCommand(t *testing.T) {
 	}
 }
 
+// TestRunREPLStartupModeAppliesFromOptions confirms -m/--mode
+// (options.go's opts.mode) becomes the REPL's initial output mode, and
+// that .mode column's automatic .headers-on (cmdMode, dotcmd.go) applies
+// the same way when column is the startup mode too.
+func TestRunREPLStartupModeAppliesFromOptions(t *testing.T) {
+	db, err := engine.Open(filepath.Join(t.TempDir(), "missing"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("CREATE TABLE t(a)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO t VALUES (1)"); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errw bytes.Buffer
+	code := runREPL(db, "self", strings.NewReader("SELECT a FROM t;\n"), &out, &errw, false, &options{mode: modeJSON})
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr=%q", code, errw.String())
+	}
+	if got, want := out.String(), `{"columns":["a"],"rows":[[1]]}`+"\n"; got != want {
+		t.Fatalf("startup -m json output = %q, want %q", got, want)
+	}
+}
+
 // TestRunREPLNonInteractiveSuppressesPromptAndBanner confirms spec §13:
 // a non-interactive run (piped stdin) prints no prompt/continuation
 // prompt at all, keeping stdout exactly the query output.

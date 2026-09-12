@@ -2,12 +2,11 @@
 // console (REPL) backed by the engine package, with the data area
 // embedded in this very executable (docs/spec/san-db-ox_spec_ja.md §1).
 //
-// Phase 1 Step 4 keeps this deliberately minimal: no -c/--serve-stdio
-// (batch execution, stdio protocol -- Phase ④), no -i/-r
-// (--snapshot-interval, --read-only), no -m/-o/-t/-q (output mode,
-// snapshot defaults, quiet -- introduced alongside the REPL/CLI features
-// they configure). Running with no arguments is the only supported
-// invocation besides -h/--help and -v/--version.
+// Phase 3 adds the REPL's full command set, output modes, and the
+// startup options that configure them (-m/-o/-t/-q/-i). -c/--command,
+// --serve-stdio, and -r/--read-only stay out of scope for this build
+// (Phase ④'s batch execution and stdio protocol); parseOptions
+// (options.go) reports them as ordinary unrecognized flags.
 package main
 
 import (
@@ -27,19 +26,24 @@ func main() {
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	for _, a := range args {
-		switch a {
-		case "-h", "--help":
-			printUsage(stdout)
-			return 0
-		case "-v", "--version":
-			fmt.Fprintf(stdout, "SanDBox %s\n", version)
-			return 0
-		default:
-			fmt.Fprintf(stderr, "san-db-ox: unrecognized argument: %s\n", a)
-			printUsage(stderr)
-			return 2
-		}
+	opts, err := parseOptions(args, stderr)
+	if err != nil {
+		// flag.FlagSet already printed its own error and (via fs.Usage)
+		// this package's printUsage to errw for a parse error; a value
+		// validation error (e.g. an unknown -m MODE) has not, so print
+		// both here. Printing usage twice for the former is harmless
+		// (both go to stderr) and keeps this branch a single codepath.
+		fmt.Fprintln(stderr, "san-db-ox:", err)
+		printUsage(stderr)
+		return 2
+	}
+	if opts.help {
+		printUsage(stdout)
+		return 0
+	}
+	if opts.version {
+		fmt.Fprintf(stdout, "SanDBox %s\n", version)
+		return 0
 	}
 
 	self, err := os.Executable()
@@ -56,10 +60,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	defer db.Close()
 
 	interactive := isInteractive(stdin)
-	if interactive {
+	if interactive && !opts.quiet {
 		printBanner(stdout, db, self)
 	}
-	return runREPL(db, self, stdin, stdout, stderr, interactive, &options{})
+
+	stopInterval := startSnapshotInterval(db, self, opts, stderr)
+	defer stopInterval()
+
+	return runREPL(db, self, stdin, stdout, stderr, interactive, opts)
 }
 
 // isInteractive reports whether in looks like a terminal (spec §13): a
@@ -88,7 +96,12 @@ SanDBox: a portable, single-binary RDBMS with no setup required. Running
 with no options starts an interactive SQL console (REPL).
 
 Options:
-  -h, --help     Show this help and exit
-  -v, --version  Show version and exit
+  -m, --mode MODE              Output format: list|column|csv|json|line (default list)
+  -o, --snapshot-as FILENAME   Default filename for .snapshot
+  -q, --quiet                  Suppress the startup banner
+  -t, --timestamp               Append a timestamp to saved filenames
+  -i, --snapshot-interval DUR  Periodically save a snapshot, e.g. 5m
+  -v, --version                 Show version and exit
+  -h, --help                    Show this help and exit
 `)
 }

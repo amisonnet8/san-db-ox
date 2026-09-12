@@ -69,9 +69,15 @@ func runREPL(db *engine.DB, self string, in io.Reader, out, errw io.Writer, inte
 	}
 	defer sess.Close()
 
+	mode := modeList
+	if opts != nil && opts.mode != "" {
+		mode = opts.mode
+	}
+	headers := mode == modeColumn // .mode column auto-enables .headers, matching cmdMode (dotcmd.go)
+
 	r := &repl{
 		db: db, sess: sess, self: self, opts: opts,
-		interactive: interactive, mode: modeList,
+		interactive: interactive, mode: mode, headers: headers,
 		out: out, errw: errw,
 	}
 	return r.run(in)

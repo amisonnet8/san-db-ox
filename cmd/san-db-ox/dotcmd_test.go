@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/amisonnet8/san-db-ox/engine"
 )
@@ -113,7 +114,7 @@ func TestCmdSchemaAllAndFiltered(t *testing.T) {
 // broke this test on windows-latest CI before this fix.
 func TestCmdSnapshotDefaultAndExplicitName(t *testing.T) {
 	selfDir := t.TempDir()
-	self := filepath.Join(selfDir, snapshotFilename("fake-self", runtime.GOOS))
+	self := filepath.Join(selfDir, snapshotFilename("fake-self", false, false, time.Now(), runtime.GOOS))
 	if err := os.WriteFile(self, []byte("x"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +128,7 @@ func TestCmdSnapshotDefaultAndExplicitName(t *testing.T) {
 	if err := r.cmdSnapshot(nil); err != nil {
 		t.Fatalf("cmdSnapshot (default name): %v", err)
 	}
-	wantDefault := snapshotFilename(filepath.Base(self), runtime.GOOS)
+	wantDefault := snapshotFilename(filepath.Base(self), false, false, time.Now(), runtime.GOOS)
 	if _, err := os.Stat(filepath.Join(cwd, wantDefault)); err != nil {
 		t.Fatalf("expected a snapshot at CWD/%s: %v", wantDefault, err)
 	}
@@ -136,7 +137,7 @@ func TestCmdSnapshotDefaultAndExplicitName(t *testing.T) {
 	if err := r.cmdSnapshot([]string{"mydb"}); err != nil {
 		t.Fatalf("cmdSnapshot (explicit name): %v", err)
 	}
-	wantExplicit := snapshotFilename("mydb", runtime.GOOS)
+	wantExplicit := snapshotFilename("mydb", false, false, time.Now(), runtime.GOOS)
 	if _, err := os.Stat(filepath.Join(cwd, wantExplicit)); err != nil {
 		t.Fatalf("expected a snapshot at CWD/%s: %v", wantExplicit, err)
 	}

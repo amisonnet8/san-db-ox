@@ -2,10 +2,10 @@ package main
 
 import (
 	"fmt"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // handleDotCommand parses and runs one dot command, returning whether the
@@ -137,15 +137,18 @@ func (r *repl) cmdHeaders(args []string) error {
 
 // cmdSnapshot implements ".snapshot [FILENAME]": save a new executable
 // carrying the current data (spec §4). With no FILENAME, the base name
-// defaults to the running executable's own name (naming.md's table,
-// "ファイル名省略、実行中バイナリ名がベース"). --sqlite/--timestamp are
-// Step 4 scope.
+// defaults to -o/--snapshot-as if the process was started with one,
+// otherwise the running executable's own name (naming.md's table,
+// "ファイル名省略、実行中バイナリ名がベース"; defaultSnapshotBase,
+// filename.go). The startup -t/--timestamp default applies unless
+// overridden by this call's own --timestamp (Step 4 adds --sqlite and a
+// per-call --timestamp override).
 func (r *repl) cmdSnapshot(args []string) error {
-	base := filepath.Base(r.self)
+	base := defaultSnapshotBase(r.self, r.opts)
 	if len(args) > 0 {
 		base = args[0]
 	}
-	path := snapshotFilename(base, runtime.GOOS)
+	path := snapshotFilename(base, r.opts != nil && r.opts.timestamp, false, time.Now(), runtime.GOOS)
 
 	if err := r.db.Snapshot(path); err != nil {
 		return err
