@@ -1,0 +1,12 @@
+# Build artifacts (binaries are not committed; see .claude/rules/distribution.md)
+/san-db-ox
+/san-db-ox.exe
+/san-db-ox_*
+
+# Go tooling
+*.test
+*.out
+coverage.*
+
+# OS cruft
+.DS_Store

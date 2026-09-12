@@ -1,0 +1,31 @@
+{
+  "language": "japanese",
+  "permissions": {
+    "allow": ["Bash(*)"],
+    "ask": [
+      "Bash(git pull*)",
+      "Bash(git fetch*)",
+      "Bash(git push*)",
+      "Bash(git clone*)",
+      "Bash(curl*)",
+      "Bash(wget*)",
+      "Bash(*install*)",
+      "Bash(go get*)",
+      "Bash(*sudo*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/build-on-go-change.sh",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

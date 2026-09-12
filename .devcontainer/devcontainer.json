@@ -1,0 +1,23 @@
+{
+  "name": "san-db-ox",
+  "image": "mcr.microsoft.com/devcontainers/go:1.26-bookworm",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.Go",
+        "ms-vscode.makefile-tools",
+        "github.vscode-github-actions"
+      ],
+      "settings": {
+        "go.useLanguageServer": true,
+        "editor.formatOnSave": true,
+        "go.formatTool": "goimports"
+      }
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/postCreate.sh",
+  "remoteUser": "vscode",
+  "containerEnv": {
+    "CGO_ENABLED": "0"
+  }
+}
