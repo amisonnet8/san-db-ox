@@ -57,6 +57,13 @@ func (db *DB) HasData() bool {
 // lifetime (a store with no connections left open can be freed), plus
 // the DSN callers need to reach the same store as a Backup destination
 // (backup.go) or from DB.sdb's own connection pool.
+//
+// sdb's pool is deliberately left with no connection limit
+// (SetMaxOpenConns is never called): Session (session.go) checks out one
+// connection and holds it until Close, so a limit would let enough
+// outstanding Sessions deadlock every later Session/Exec/Query call
+// against this DB -- each waiting for a connection a live Session is
+// sitting on and has no reason to give back.
 func newLiveDB() (sdb *sql.DB, keeper *sql.Conn, dsn string, err error) {
 	name := fmt.Sprintf("san-db-ox%d", atomic.AddInt64(&dbSeq, 1))
 	dsn = fmt.Sprintf("file:/%s?vfs=memdb&_busy_timeout=%d", name, defaultBusyTimeoutMS)
