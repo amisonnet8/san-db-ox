@@ -72,40 +72,52 @@ importしていないことをCIが検証している。
 
 ## 現在地
 
-**フェーズ①Step 2（技術検証スパイク）完了・意思決定ゲート通過。** `engine`・
-`cmd/san-db-ox` はまだ存在しない（`.go`ファイル自体がまだ無い。Step 3で着手）。
+**フェーズ①Step 3（`engine`パッケージ最小実装）完了。** `cmd/san-db-ox` は
+まだ存在しない（Step 4で着手）。
 
-- **Step 1（足場固め）**: `go.mod`（`github.com/amisonnet8/san-db-ox`、
-  Go 1.26.8）・`go.sum`（`modernc.org/sqlite v1.58.0`）・`Makefile`・
-  `.gitattributes`/`.gitignore`・`PostToolUse`フック。
-- **Step 2（技術検証スパイク）**: `_spike/main.go`（使い捨て、Go tool的に
-  `./...`から自動除外される`_`始まりディレクトリ。検証後に削除済み）で
-  以下をすべて実測確認し、既存の確定事項が `modernc.org/sqlite v1.58.0`
-  （ExecDBと同一バージョン）でも成立することを再確認した。
-  1. **未確認事項1番（最優先）を解消:** `Serialize()`の出力を素のファイルへ
-     書き出し、`vfs=memdb`を介さない独立した`sql.Open`で開いて`SELECT`が
-     通ることを確認。先頭16バイトも`SQLite format 3\0`と一致。
-     → 仕様書§6の脚注を実測確認済みに更新済み。
-  2. `conn.Raw()`からの型アサーションで`Serialize`/`Deserialize`に到達可能
-     （スキーマ名引数なし）。
-  3. `Deserialize`後のDBは書き込み可能で、元のサイズ（10行）を大きく超えて
-     成長できる（5,010行まで確認、`SQLITE_DESERIALIZE_RESIZEABLE`通り）。
-  4. `vfs=memdb`は名前ベースで共有され、全接続（keeper含む）を閉じると
-     ストアが破棄されること（keeper接続で防げること）を確認。
-  5. `Deserialize`は呼び出したコネクションにしか反映されない
-     （同名の別接続からは見えない）一方、Backup APIでコピーすると
-     生きているDB上の既存セッション（コピー前から開いていた接続）からも
-     新データが見えることを確認。
-  6. `busy_timeout`は`vfs=memdb`では効く（約1秒でSQLITE_BUSYを返す）が、
-     `mode=memory&cache=shared`では3秒待っても返らない（無期限ハングと
-     整合する挙動）ことを確認——`memdb`採用の判断根拠を再確認。
-  - **未実施（意図的）:** 実効サイズ上限（約1GiB）の実測再現は、埋める
-    処理に時間がかかるため今回は行わず、`modernc.org/sqlite`のソース上の
-    `SQLITE_MEMDB_DEFAULT_MAXSIZE = 1073741824`（1GiB）定数を直接確認する
-    形に留めた（仕様書の記述と一致）。将来、実際に近づける場面
-    （大容量データの扱い）が出てきたら実測すること。
+- **Step 1（足場固め）**: `go.mod`/`go.sum`（`modernc.org/sqlite v1.58.0`）・
+  `Makefile`・`.gitattributes`/`.gitignore`・`PostToolUse`フック。
+- **Step 2（技術検証スパイク）**: 既存の確定事項（上表）が
+  `modernc.org/sqlite v1.58.0` でも成立することを使い捨てスパイクで再確認、
+  未確認事項1番（`Serialize()`出力の妥当性）を解消。詳細は過去のコミット
+  （`33dcd41`）参照。
+- **Step 3（`engine`パッケージ最小実装）**: `engine/`に以下を実装。
+  - `footer.go`: 32バイト固定長フッターのエンコード/デコード
+    （`Magic`/`FooterSize`/`FormatVersion`/`MaxDataSize`を公開定数化、
+    パース結果自体は`footerInfo`として非公開——`Inspect`公開APIは
+    フェーズ②で追加）。
+  - `serialize.go`/`backup.go`: `conn.Raw()`型アサーションによる
+    `Serialize`/`Deserialize`/`NewBackup`到達、`loadBlobInto`
+    （使い捨て接続へDeserialize→Backup APIでkeeper接続の生きているDBへ
+    コピー、の2段構え）。
+  - `engine.go`: `DB`型（`mu`/`sdb`/`keeper`/`dsn`/`closed`）、
+    `Open`/`OpenSelf`/`Exec`/`ExecContext`/`Query`/`QueryContext`/
+    `QueryRow`/`QueryRowContext`/`Close`。`Open`は素のSQLiteファイルの
+    バイト列をそのままDeserializeする単純な実装（フッター判定はしない
+    ——それは`Load`の役目でフェーズ②）。DB名は`san-db-ox<連番>`で
+    プロセス内の複数DBインスタンスの衝突を避ける。
+  - `persist.go`: `Snapshot`/`Overwrite`。**設計判断:** `Snapshot`は
+    `Open`/`OpenSelf`のどちらで開いたかに依存せず、呼び出し時点の
+    `os.Executable()`を毎回読み直してエンジンバイトを決定する（仕様書§10
+    「ここでの『エンジンバイト』はホストアプリのバイナリ全体」との整合を
+    優先し、ExecDBが採用していた「Open時にsourcePath/engineSizeを
+    キャッシュする」方式は採らなかった——設計判断は別物、CLAUDE.md）。
+    `serializeBarrier`（`BEGIN IMMEDIATE`で書き込みロックを取ってから
+    `Serialize`する、torn snapshot防止）、`overwriteSelf`（rename退避→
+    新規書き込み→退避削除）、`looksLikeGoRunTempBinary`（`go run`の
+    一時バイナリを拒否）も実装。
+  - `errors.go`: `ErrClosed`/`ErrNotOverwritable`/`ErrBusy`/`ErrTooLarge`。
+  - テスト: `footer_test.go`/`engine_test.go`/`persist_test.go`
+    （20件、`go test`・`-race`とも green）。`.overwrite`の実挙動は
+    `go test`からは検証できない（testing.md）ため、ユニットテストでは
+    `overwriteSelf`を直接呼んで退避・書き込み・ロールバックの手順を検証し、
+    別途 `make build`相当の実バイナリ（使い捨てスパイク、削除済み）で
+    `OpenSelf`→`Overwrite`→再起動→`OpenSelf`のループを3周させ、データが
+    実際に永続化されること・退避ファイルが残らないことを実機確認した。
+  - `net`/`net/http`を直接importしていないことを確認済み（CI化はStep 5）。
 
-**次にやること:** フェーズ①Step 3（`engine`パッケージ最小実装）。
+**次にやること:** フェーズ①Step 4（`cmd/san-db-ox` — CLI・バナー・REPL
+最小実装）。
 
 ## 未確認事項（実装前に決める・確かめる）
 
