@@ -7,6 +7,43 @@ import (
 	"testing"
 )
 
+func TestSamePath(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a")
+	b := filepath.Join(dir, "b")
+
+	if !samePath(a, a) {
+		t.Errorf("samePath(a, a) = false, want true")
+	}
+	if !samePath(a, filepath.Join(dir, ".", "a")) {
+		t.Errorf("samePath should ignore a redundant './' component")
+	}
+	if samePath(a, b) {
+		t.Errorf("samePath(a, b) = true, want false (different files)")
+	}
+
+	rel := "a"
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	if !samePath(rel, filepath.Join(dir, "a")) {
+		t.Errorf("samePath should resolve a relative path against the current directory")
+	}
+	t.Chdir(wd)
+
+	if runtime.GOOS == "windows" {
+		if !samePath(filepath.Join(dir, "A"), a) {
+			t.Errorf("samePath should be case-insensitive on Windows")
+		}
+	} else {
+		if samePath(filepath.Join(dir, "A"), a) {
+			t.Errorf("samePath should be case-sensitive outside Windows")
+		}
+	}
+}
+
 func TestLooksLikeGoRunTempBinary(t *testing.T) {
 	tmp := os.TempDir()
 	cases := []struct {
@@ -248,5 +285,33 @@ func TestOverwriteRejectsGoTestBinary(t *testing.T) {
 	defer db.Close()
 	if err := db.Overwrite(); err != ErrNotOverwritable {
 		t.Fatalf("Overwrite() from a go test binary = %v, want ErrNotOverwritable", err)
+	}
+}
+
+// TestSnapshotTargetingSelfInGoTestIsRejected covers Snapshot's
+// self-targeting branch (added after windows-latest CI found that a
+// plain os.Rename onto the running executable's own path fails there --
+// PLAN.md Phase 1 Step 5): when path resolves to the same file as
+// os.Executable(), Snapshot switches to the same evacuate-then-write
+// path Overwrite uses, so it must honor the same go-run-temp-binary
+// guard. Exercising the successful evacuate-then-write path itself isn't
+// possible from `go test` (same reason Overwrite's own success path
+// isn't, see TestOverwriteSelfMechanics for that logic tested directly).
+func TestSnapshotTargetingSelfInGoTestIsRejected(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !looksLikeGoRunTempBinary(self) {
+		t.Skip("this Go toolchain does not build go test binaries under a go-build* temp dir; nothing to assert")
+	}
+
+	db, err := newDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Snapshot(self); err != ErrNotOverwritable {
+		t.Fatalf("Snapshot(self) from a go test binary = %v, want ErrNotOverwritable", err)
 	}
 }

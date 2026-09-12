@@ -72,11 +72,47 @@ importしていないことをCIが検証している。
 
 ## 現在地
 
-**フェーズ①（ミニマム実装）完了。Step 1〜5すべて完了。** ローカルでの
-`make check`・`make test`はgreen。GitHub Actions 3OSマトリクス
-（`test.yml`）は今回のセッションで新規作成したのみで、実際のCI実行結果は
-（pushはユーザーが行うため）未確認——**次にリポジトリがpushされ、CIが
-green であることを確認したら、正式にフェーズ①完了としてフェーズ②へ進む。**
+**フェーズ①（ミニマム実装）はStep 1〜5の実装自体は完了しているが、
+GitHub Actions 3OSマトリクス（`test.yml`）はまだgreenになっていない。**
+ユーザーがpush→CI実行→エラー報告、を2周行い、**Windows特有の実バグを
+2件発見・修正済み**（下記）。ローカル（Linux）では`make check`・
+`make test`・`make race`すべてgreen。**次にユーザーが再度pushしてCIが
+greenになることを確認できたら、正式にフェーズ①完了としてフェーズ②へ進む。**
+
+### Windows CIで発見した実バグ（Step 5後の修正、pushフィードバックより）
+
+1回目のpush→CI: `check (windows-latest)`が`TestCmdSnapshotDefaultAndExplicitName`
+で失敗。原因は`cmd/san-db-ox/dotcmd_test.go`が拡張子なしのファイル名を
+期待値に使っていたが、Windowsでは`snapshotFilename`が`.exe`を自動付与する
+ため実際の出力先とズレていた（テスト側の不備）。`snapshotFilename(...,
+runtime.GOOS)`で期待値自体を計算する形に修正。**この時点でついでに
+`tests/e2e.sh`側にも同型の不備（`.snapshot`の明示名・競合テストのターゲット
+パスが拡張子なし）を発見し先回りで修正**（コミット`3113bbd`、`f31b45e`）。
+
+2回目のpush→CI: `make test`が2箇所で失敗。
+1. **`Error: rename ... Access is denied.`**（`.snapshot`が自分自身の
+   パスへ書き込もうとした際）。`FILENAME`省略時のデフォルト名（実行中
+   バイナリ名がベース）はCWDが実行ファイルの場所と同じなら自分自身の
+   パスと一致するため、これは実際の使用シーンでも起こりうる本物の
+   バグだった。**Linuxでは一時ファイル＋`rename`が自分自身のパスに
+   対しても成功する（偶然）が、Windowsでは失敗する。** `engine.Snapshot`が
+   保存先を自分自身と検知した場合、`.overwrite`と同じ退避方式
+   （`overwriteSelf`）に自動的に切り替えるよう修正（`samePath`ヘルパー、
+   `go run`一時バイナリガードも同じ分岐に適用）。仕様書§11に追記。
+2. **`.san-db-ox.old`退避ファイルが`.overwrite`直後に残っていた。**
+   これは**バグではなく仕様書§11で最初から想定されていた挙動**
+   （Windowsは実行中は退避ファイルを削除できず、次回起動時に
+   ベストエフォートで削除される）。`tests/e2e.sh`のアサーションが
+   「`.overwrite`直後」に確認していたのが誤りで、「次にバイナリを
+   起動した後」に確認する形へ修正。あわせて`.snapshot`の自己上書き
+   検証も「ファイルが存在するだけ」の弱いアサーションから、
+   「新しいデータが実際に読めること」まで確認する形に強化（でないと
+   1番のバグを検出できなかった）。
+   （コミット、まだ未push）
+
+この2周で見つけた教訓は`testing.md`に3件追記済み（`grep -qx`ではなく
+部分一致を使うこと、退避ファイルの削除タイミングはOS依存、`.snapshot`の
+自己上書き検証は弱いアサーションで済ませないこと）。
 
 - **Step 1（足場固め）**: `go.mod`/`go.sum`（`modernc.org/sqlite v1.58.0`）・
   `Makefile`・`.gitattributes`/`.gitignore`・`PostToolUse`フック

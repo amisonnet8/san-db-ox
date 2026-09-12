@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -19,29 +20,75 @@ const oldSuffix = ".san-db-ox.old"
 // §10: "この区別はOpenで開いたかOpenSelfで開いたかに依存しない") --
 // Snapshot always replicates whatever binary is currently running,
 // because "ここでの「エンジンバイト」はホストアプリのバイナリ全体" (§10).
-// The write is atomic: a temporary file in path's directory, then
-// renamed into place (spec §11).
+//
+// If path happens to name the running executable itself -- the default
+// no-FILENAME case naturally lands here, since it names path after
+// self's own basename in the current directory (naming.md) -- Snapshot
+// switches to Overwrite's evacuate-then-write technique instead of a
+// plain rename-into-place: confirmed by Phase 1 Step 5's Windows CI run,
+// a straight `os.Rename` onto the running executable's own path fails
+// there ("Access is denied") even though it succeeds on Linux/macOS.
+// Unlike Overwrite, the caller's process keeps running from its original
+// (now-unlinked-or-renamed-away) image either way; only the file on disk
+// changes.
+//
+// Otherwise the write is atomic: a temporary file in path's directory,
+// then renamed into place (spec §11).
 //
 // Snapshot does not generate a file name (timestamps, ".exe" completion,
 // §12): that is cmd/san-db-ox's responsibility (naming.md); path is used
 // as-is.
 func (db *DB) Snapshot(path string) error {
-	engineBytes, data, err := db.image()
+	self, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("engine: os.Executable: %w", err)
+	}
+	targetsSelf := samePath(path, self)
+	if targetsSelf && looksLikeGoRunTempBinary(self) {
+		// Same reasoning as Overwrite: `go run` deletes this file on
+		// exit, so evacuating and rewriting it would be pointless.
+		return ErrNotOverwritable
+	}
+
+	engineBytes, data, err := db.currentImage(self)
 	if err != nil {
 		return err
+	}
+
+	if targetsSelf {
+		return overwriteSelf(self, engineBytes, data)
 	}
 	return writeImageAtomic(path, engineBytes, data)
 }
 
-// image re-reads the running executable's engine prefix and takes a
-// consistent snapshot of the live database. Both Snapshot and Overwrite
-// build their output this way.
-func (db *DB) image() (engineBytes, data []byte, err error) {
-	self, err := os.Executable()
-	if err != nil {
-		return nil, nil, fmt.Errorf("engine: os.Executable: %w", err)
+// samePath reports whether a and b name the same file, without requiring
+// either to exist (unlike os.SameFile, which stats both): Snapshot's
+// target usually doesn't exist yet, so this compares cleaned absolute
+// paths instead. Windows path comparison is case-insensitive
+// (NTFS/Windows semantics); elsewhere it is case-sensitive. This is a
+// best-effort check for the common case (naming.md's default-name rule
+// naturally recreating self's own path) -- it does not resolve symlinks
+// or hard links to a distinct-looking path onto the same file.
+func samePath(a, b string) bool {
+	absA, errA := filepath.Abs(a)
+	absB, errB := filepath.Abs(b)
+	if errA != nil || errB != nil {
+		return false
 	}
+	absA, absB = filepath.Clean(absA), filepath.Clean(absB)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(absA, absB)
+	}
+	return absA == absB
+}
 
+// currentImage takes a consistent snapshot of the live database and
+// re-reads self's engine prefix. Both Snapshot and Overwrite build their
+// output this way; self is the caller's already-resolved
+// os.Executable() so Overwrite can check looksLikeGoRunTempBinary before
+// paying for this (serializeBarrier can block on another connection's
+// write lock).
+func (db *DB) currentImage(self string) (engineBytes, data []byte, err error) {
 	data, err = db.serializeBarrier()
 	if err != nil {
 		return nil, nil, err
@@ -176,11 +223,7 @@ func (db *DB) Overwrite() error {
 		return ErrNotOverwritable
 	}
 
-	data, err := db.serializeBarrier()
-	if err != nil {
-		return err
-	}
-	engineBytes, err := readEnginePrefix(self)
+	engineBytes, data, err := db.currentImage(self)
 	if err != nil {
 		return err
 	}

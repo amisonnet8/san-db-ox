@@ -81,35 +81,58 @@ pass "REPL: .exit CODE and EOF termination"
 # rule (an extension-less name gets ".exe" appended on Windows) is
 # covered at the unit level (filename_test.go); giving the name its
 # proper extension here keeps this e2e check itself platform-agnostic.
+#
+# Row 8 is inserted only AFTER the explicit-name snapshot and BEFORE the
+# no-name one, so the no-name snapshot's content (must have both 7 and 8)
+# is distinguishable from the explicit-name one's (must have only 7) --
+# a plain "the file still exists" check would not have caught the
+# self-targeting write actually failing (the no-name default targets
+# this same running binary's own path, and Windows CI initially found
+# that a plain rename onto it is rejected there; engine.Snapshot now
+# detects that case and reuses Overwrite's evacuate-then-write path).
 cp "$BIN" "$WORK/snapsrc$EXE"
 chmod +x "$WORK/snapsrc$EXE"
-(cd "$WORK" && printf 'CREATE TABLE t(a INTEGER);\nINSERT INTO t VALUES (7);\n.snapshot explicit-name%s\n.snapshot\n.exit\n' "$EXE" | exec "./snapsrc$EXE" >/dev/null)
+(cd "$WORK" && printf 'CREATE TABLE t(a INTEGER);\nINSERT INTO t VALUES (7);\n.snapshot explicit-name%s\nINSERT INTO t VALUES (8);\n.snapshot\n.exit\n' "$EXE" | exec "./snapsrc$EXE" >/dev/null)
+
 [ -f "$WORK/explicit-name$EXE" ] || fail ".snapshot <name> did not create a file"
-[ -f "$WORK/snapsrc$EXE" ] || fail ".snapshot with no name did not (re)create CWD/<binary-basename>"
 chmod +x "$WORK/explicit-name$EXE"
 out="$(printf 'SELECT * FROM t;\n.exit\n' | "$WORK/explicit-name$EXE" 2>&1)"
-echo "$out" | grep -q '|7\|> 7' || fail "the snapshot file does not contain the seeded row (got: $out)"
-pass ".snapshot: explicit name and CWD-relative default name both produce standalone runnable files"
+echo "$out" | grep -q '7' || fail "the explicit-name snapshot does not contain the seeded row (got: $out)"
+if echo "$out" | grep -q '8'; then fail "the explicit-name snapshot should not contain row 8, inserted after it ran (got: $out)"; fi
+
+[ -f "$WORK/snapsrc$EXE" ] || fail ".snapshot with no name did not (re)create CWD/<binary-basename>"
+out="$(printf 'SELECT * FROM t;\n.exit\n' | "$WORK/snapsrc$EXE" 2>&1)"
+echo "$out" | grep -q '7' || fail "the self-targeting default-name snapshot lost row 7 (got: $out)"
+echo "$out" | grep -q '8' || fail "the self-targeting default-name snapshot did not persist row 8 -- the write may have silently failed (got: $out)"
+pass ".snapshot: explicit name and CWD-relative (self-targeting) default name both produce standalone runnable files with the right data"
 
 # --- .overwrite: persists data, cleans up its sidecar, and repeated
 # cycles keep working (spec §4, §11) ---
+#
+# Sidecar cleanup timing is platform-dependent (spec §11) and this is a
+# real difference, not a bug: on Linux the rename-away'd sidecar is
+# unlinked immediately, but on Windows it stays locked for as long as
+# THIS process (which is still running from that now-renamed-away image)
+# is alive, so it can only be removed by the *next* process's OpenSelf()
+# at its own startup. Every sidecar check below therefore comes after a
+# subsequent launch of the binary, never right after .overwrite itself.
 cp "$BIN" "$WORK/ow$EXE"
 chmod +x "$WORK/ow$EXE"
 before_size=$(wc -c <"$WORK/ow$EXE")
 printf 'CREATE TABLE t(a INTEGER);\nINSERT INTO t VALUES (99);\n.overwrite\n' | "$WORK/ow$EXE" >/dev/null
 after_size=$(wc -c <"$WORK/ow$EXE")
 [ "$after_size" -gt "$before_size" ] || fail ".overwrite did not grow the file as expected ($before_size -> $after_size)"
-[ ! -e "$WORK/ow$EXE.san-db-ox.old" ] || fail ".san-db-ox.old sidecar was not cleaned up after .overwrite"
 out="$(printf 'SELECT * FROM t;\n.exit\n' | "$WORK/ow$EXE" 2>&1)"
 echo "$out" | grep -q '99' || fail "data did not survive .overwrite (got: $out)"
+[ ! -e "$WORK/ow$EXE.san-db-ox.old" ] || fail ".san-db-ox.old sidecar was not cleaned up by the next launch's OpenSelf"
 
 # second round: append more data and overwrite again
 printf 'INSERT INTO t VALUES (100);\n.overwrite\n' | "$WORK/ow$EXE" >/dev/null
-[ ! -e "$WORK/ow$EXE.san-db-ox.old" ] || fail ".san-db-ox.old sidecar leaked after a second .overwrite"
 out="$(printf 'SELECT * FROM t;\n.exit\n' | "$WORK/ow$EXE" 2>&1)"
 echo "$out" | grep -q '99' || fail "row from round 1 did not survive round 2 (got: $out)"
 echo "$out" | grep -q '100' || fail "row from round 2 is missing (got: $out)"
-pass ".overwrite: persists data across two rounds and cleans up its sidecar each time"
+[ ! -e "$WORK/ow$EXE.san-db-ox.old" ] || fail ".san-db-ox.old sidecar leaked after a second .overwrite cycle"
+pass ".overwrite: persists data across two rounds and cleans up its sidecar (by the next launch, at the latest)"
 
 # --- concurrent processes from copies of the same binary have
 # independent in-memory databases (spec §8's multi-process precondition,
