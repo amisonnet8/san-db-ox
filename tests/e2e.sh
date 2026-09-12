@@ -76,14 +76,18 @@ pass "REPL: .exit CODE and EOF termination"
 
 # --- .snapshot: explicit name and CWD-relative default name (spec §4; the
 # default-name behavior is CWD-relative, not next to the binary --
-# .claude/rules/testing.md's e2e pitfalls note) ---
+# .claude/rules/testing.md's e2e pitfalls note). The explicit name is
+# given with $EXE already attached: naming.md's extension-completion
+# rule (an extension-less name gets ".exe" appended on Windows) is
+# covered at the unit level (filename_test.go); giving the name its
+# proper extension here keeps this e2e check itself platform-agnostic.
 cp "$BIN" "$WORK/snapsrc$EXE"
 chmod +x "$WORK/snapsrc$EXE"
-(cd "$WORK" && printf 'CREATE TABLE t(a INTEGER);\nINSERT INTO t VALUES (7);\n.snapshot explicit-name\n.snapshot\n.exit\n' | exec "./snapsrc$EXE" >/dev/null)
-[ -f "$WORK/explicit-name" ] || fail ".snapshot <name> did not create a file"
+(cd "$WORK" && printf 'CREATE TABLE t(a INTEGER);\nINSERT INTO t VALUES (7);\n.snapshot explicit-name%s\n.snapshot\n.exit\n' "$EXE" | exec "./snapsrc$EXE" >/dev/null)
+[ -f "$WORK/explicit-name$EXE" ] || fail ".snapshot <name> did not create a file"
 [ -f "$WORK/snapsrc$EXE" ] || fail ".snapshot with no name did not (re)create CWD/<binary-basename>"
-chmod +x "$WORK/explicit-name"
-out="$(printf 'SELECT * FROM t;\n.exit\n' | "$WORK/explicit-name" 2>&1)"
+chmod +x "$WORK/explicit-name$EXE"
+out="$(printf 'SELECT * FROM t;\n.exit\n' | "$WORK/explicit-name$EXE" 2>&1)"
 echo "$out" | grep -q '|7\|> 7' || fail "the snapshot file does not contain the seeded row (got: $out)"
 pass ".snapshot: explicit name and CWD-relative default name both produce standalone runnable files"
 
@@ -144,7 +148,7 @@ pass "multi-process: several processes reading the same binary's footer concurre
 cp "$BIN" "$WORK/racer1$EXE"
 cp "$BIN" "$WORK/racer2$EXE"
 chmod +x "$WORK/racer1$EXE" "$WORK/racer2$EXE"
-TARGET="$WORK/raced-snapshot"
+TARGET="$WORK/raced-snapshot$EXE"
 ( printf 'CREATE TABLE t(v TEXT);\nINSERT INTO t VALUES (%s);\n.snapshot %s\n.exit\n' "'from-racer1'" "$TARGET" | "$WORK/racer1$EXE" >/dev/null ) &
 r1=$!
 ( printf 'CREATE TABLE t(v TEXT);\nINSERT INTO t VALUES (%s);\n.snapshot %s\n.exit\n' "'from-racer2'" "$TARGET" | "$WORK/racer2$EXE" >/dev/null ) &
