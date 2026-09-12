@@ -72,30 +72,45 @@ importしていないことをCIが検証している。
 
 ## 現在地
 
-**フェーズ①Step 1（足場固め）完了。** `engine`・`cmd/san-db-ox` はまだ存在しない
-（`.go`ファイル自体がまだ無い）。
+**フェーズ①Step 2（技術検証スパイク）完了・意思決定ゲート通過。** `engine`・
+`cmd/san-db-ox` はまだ存在しない（`.go`ファイル自体がまだ無い。Step 3で着手）。
 
-- `go.mod`（モジュールパス `github.com/amisonnet8/san-db-ox`、Go 1.26.8）
-- `go.sum`、`modernc.org/sqlite v1.58.0` を取得済み（ExecDBが実測検証した
-  バージョンと一致。§11の確定事項の再検証はStep 2で行う）
-- `Makefile`（`build`/`unit`/`test`/`check`/`fmt`/`fmt-check`/`vet`/`race`/`clean`）。
-  `test`（`tests/e2e.sh`呼び出し）はStep 5までスクリプト自体が無いため未実行。
-  `vet`/`unit`は`.go`ファイルが1つも無いためエラーになる状態（`go vet`/
-  `go test`はパッケージ0件だと非ゼロ終了する。`go build`は0件でも成功する）——
-  Step 3で`engine`パッケージができれば解消する、想定内の一時的な状態
-- `.gitattributes`（`* text=auto eol=lf`）、`.gitignore`（ビルド成果物除外）
-- `LICENSE`（MIT、既存）
+- **Step 1（足場固め）**: `go.mod`（`github.com/amisonnet8/san-db-ox`、
+  Go 1.26.8）・`go.sum`（`modernc.org/sqlite v1.58.0`）・`Makefile`・
+  `.gitattributes`/`.gitignore`・`PostToolUse`フック。
+- **Step 2（技術検証スパイク）**: `_spike/main.go`（使い捨て、Go tool的に
+  `./...`から自動除外される`_`始まりディレクトリ。検証後に削除済み）で
+  以下をすべて実測確認し、既存の確定事項が `modernc.org/sqlite v1.58.0`
+  （ExecDBと同一バージョン）でも成立することを再確認した。
+  1. **未確認事項1番（最優先）を解消:** `Serialize()`の出力を素のファイルへ
+     書き出し、`vfs=memdb`を介さない独立した`sql.Open`で開いて`SELECT`が
+     通ることを確認。先頭16バイトも`SQLite format 3\0`と一致。
+     → 仕様書§6の脚注を実測確認済みに更新済み。
+  2. `conn.Raw()`からの型アサーションで`Serialize`/`Deserialize`に到達可能
+     （スキーマ名引数なし）。
+  3. `Deserialize`後のDBは書き込み可能で、元のサイズ（10行）を大きく超えて
+     成長できる（5,010行まで確認、`SQLITE_DESERIALIZE_RESIZEABLE`通り）。
+  4. `vfs=memdb`は名前ベースで共有され、全接続（keeper含む）を閉じると
+     ストアが破棄されること（keeper接続で防げること）を確認。
+  5. `Deserialize`は呼び出したコネクションにしか反映されない
+     （同名の別接続からは見えない）一方、Backup APIでコピーすると
+     生きているDB上の既存セッション（コピー前から開いていた接続）からも
+     新データが見えることを確認。
+  6. `busy_timeout`は`vfs=memdb`では効く（約1秒でSQLITE_BUSYを返す）が、
+     `mode=memory&cache=shared`では3秒待っても返らない（無期限ハングと
+     整合する挙動）ことを確認——`memdb`採用の判断根拠を再確認。
+  - **未実施（意図的）:** 実効サイズ上限（約1GiB）の実測再現は、埋める
+    処理に時間がかかるため今回は行わず、`modernc.org/sqlite`のソース上の
+    `SQLITE_MEMDB_DEFAULT_MAXSIZE = 1073741824`（1GiB）定数を直接確認する
+    形に留めた（仕様書の記述と一致）。将来、実際に近づける場面
+    （大容量データの扱い）が出てきたら実測すること。
 
-**次にやること:** フェーズ①Step 2（技術検証スパイク）——「未確認事項」1番
-（`Serialize()`出力がそのまま有効なSQLiteファイルか）を最優先に、確定事項の
-再検証を行う。
+**次にやること:** フェーズ①Step 3（`engine`パッケージ最小実装）。
 
 ## 未確認事項（実装前に決める・確かめる）
 
-1. **`Serialize()` の出力が、そのまま有効なSQLiteファイルとして開けるか。**
-   仕様書§6は「独自のデータファイル形式は存在しない」という前提に立っており、
-   これが崩れると `.snapshot --sqlite` と `.load` の設計が変わる。
-   **フェーズ①Step 2で最優先に検証すること。**
+1. ~~`Serialize()` の出力が、そのまま有効なSQLiteファイルとして開けるか。~~
+   **Step 2で解消（実測確認済み。仕様書§6参照）。**
 2. **REPLのプロンプト文字列。** 仕様書に記載がない。`sandbox> ` を仮置きして
    いるが（`docs/usage/repl-commands_ja.md` の例）、製品名の表記規則
    （`naming.md`）の第3段を使ってよいかを含めて決める必要がある。
