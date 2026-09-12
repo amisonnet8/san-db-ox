@@ -71,10 +71,51 @@ stdioプロトコル、`--read-only`、`--snapshot-interval`。
 `.snapshot`/`.overwrite` が機能する／`engine`・`cmd` が `net` を直接
 importしていないことをCIが検証している。
 
+## フェーズ②のステップ
+
+スコープは `engine` パッケージのみ（`cmd/san-db-ox`・`tests/e2e.sh` は
+フェーズ③まで変更しない）。
+
+0. **Step 0: 仕様書の更新＋技術検証スパイク** — `docs/spec/san-db-ox_spec_ja.md`
+   §4/§6/§10/§11 を実装前に更新。あわせて2点を使い捨てテストで実測。
+1. **Step 1: 内部リファクタ＋バグ修正**（公開API変更なし）— `backupInto` の
+   `Finish()` 漏れ修正、`decodeFooter` の切り出し、`tempFileFor`/
+   `removeTempArtifacts`/`fileDSN` の追加、新規エラー変数の追加（未使用）。
+2. **Step 2: `Inspect` / `FileInfo`** — `engine/inspect.go`。
+3. **Step 3: `Load` / `LoadFrom`＋`Open`の載せ替え** — `engine/load.go`。
+4. **Step 4: `Export`** — `engine/export.go`。
+5. **Step 5: `Session`** — `engine/session.go`。
+6. **Step 6: `Complete`** — `engine/complete.go`（ExecDB踏襲、`Xsqlite3_complete`）。
+7. **Step 7: 並行性テストと仕上げ** — `make race`、`PLAN.md`/ルールファイル更新。
+
 ## 現在地
 
-**フェーズ①（ミニマム実装）完了。GitHub Actions 3OSマトリクス（`test.yml`）
-green確認済み。** 次はフェーズ②（`engine`ライブラリ本格開発）に着手する。
+**フェーズ②（`engine`ライブラリ本格開発）着手中。** Step 0（仕様書更新＋
+技術検証スパイク）完了。以下Step 1〜7を順に進める。
+
+### フェーズ②の進捗
+
+- **Step 0（仕様書更新＋技術検証スパイク）**: 使い捨てテストで2点を実測。
+  - **検証A**: `journal_mode=WAL`のSQLiteファイルのメイン部分だけを
+    `Deserialize()`に渡すと、Deserialize自体は成功するが、その後のクエリが
+    `unable to open database file (14)`で失敗する（インメモリDBに対して
+    WALファイルを探そうとして失敗するとみられる）。**`LoadFrom`にWALモードの
+    SQLiteイメージを渡すと使い物にならないことを確認**——`Load`/`LoadFrom`は
+    `NewRestore`（ファイル経由）と`Deserialize`（バイト列経由）で経路を
+    分ける設計判断の裏付けになった。
+  - **検証A追加**: SQLiteファイルヘッダのオフセット18/19バイト目
+    （write/read format version）が`2`ならWALモードと事前検出できることを
+    実測確認（rollbackモードは`1`）。`LoadFrom`がWALイメージを明示的な
+    エラーで拒否する実装の根拠。
+  - **検証B**: `NewRestore(path)`のコピー先が生きた接続で、他の接続が
+    書き込みトランザクションを保持中の場合、busy_timeoutが正しく効き
+    （約200ms待って解放されたケースで228ms後に成功）、即エラーにはならない
+    ことを確認。`ErrBusy`へのマッピング方針の裏付け。
+  - 仕様書§4/§6/§10/§11を更新（`.load`のWAL挙動、`NewRestore`/`Deserialize`の
+    使い分け、`FileInfo`/`FileKind`/`LoadFrom`/`Complete`のAPI追加、
+    `Session`とSnapshot/Export/Loadの`ErrBusy`関係、`Complete`の実装方式）。
+
+### フェーズ①の記録
 
 - **Step 1（足場固め）**: `go.mod`/`go.sum`（`modernc.org/sqlite v1.58.0`）・
   `Makefile`・`.gitattributes`/`.gitignore`・`PostToolUse`フック
