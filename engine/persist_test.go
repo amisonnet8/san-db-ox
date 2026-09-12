@@ -7,7 +7,11 @@ import (
 	"testing"
 )
 
-func TestSamePath(t *testing.T) {
+// TestSamePathNonexistentFallsBackToPathComparison covers the case
+// neither side exists yet -- Snapshot's common case, a brand-new target
+// name -- where samePath cannot call os.SameFile and instead compares
+// cleaned absolute paths.
+func TestSamePathNonexistentFallsBackToPathComparison(t *testing.T) {
 	dir := t.TempDir()
 	a := filepath.Join(dir, "a")
 	b := filepath.Join(dir, "b")
@@ -41,6 +45,38 @@ func TestSamePath(t *testing.T) {
 		if samePath(filepath.Join(dir, "A"), a) {
 			t.Errorf("samePath should be case-sensitive outside Windows")
 		}
+	}
+}
+
+// TestSamePathExistingFilesUseSameFile confirms samePath defers to
+// os.SameFile (OS-level file identity) once both paths exist, which is
+// what actually matters for Snapshot's self-targeting detection: a pure
+// path-string comparison was confirmed insufficient on windows-latest
+// CI -- os.Executable() and a relative name resolved against the
+// current directory can legitimately spell the very same file
+// differently there (e.g. a short 8.3-style path component in one but
+// not the other) -- so this now only trusts string comparison as a
+// fallback when os.Stat can't settle the question (PLAN.md Phase 1
+// Step 5).
+func TestSamePathExistingFilesUseSameFile(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a")
+	b := filepath.Join(dir, "b")
+	if err := os.WriteFile(a, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b, []byte("y"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if !samePath(a, a) {
+		t.Errorf("samePath(a, a) = false, want true")
+	}
+	if samePath(a, b) {
+		t.Errorf("samePath(a, b) = true, want false (different existing files)")
+	}
+	if !samePath(filepath.Join(dir, ".", "a"), a) {
+		t.Errorf("samePath should recognize a differently-spelled path to the same existing file")
 	}
 }
 

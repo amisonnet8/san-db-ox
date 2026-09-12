@@ -79,7 +79,7 @@ GitHub Actions 3OSマトリクス（`test.yml`）はまだgreenになってい�
 `make test`・`make race`すべてgreen。**次にユーザーが再度pushしてCIが
 greenになることを確認できたら、正式にフェーズ①完了としてフェーズ②へ進む。**
 
-### Windows CIで発見した実バグ（Step 5後の修正、pushフィードバックより）
+### Windows CIで発見した実バグ（Step 5後の修正、pushフィードバックより。現在3周目）
 
 1回目のpush→CI: `check (windows-latest)`が`TestCmdSnapshotDefaultAndExplicitName`
 で失敗。原因は`cmd/san-db-ox/dotcmd_test.go`が拡張子なしのファイル名を
@@ -110,9 +110,28 @@ runtime.GOOS)`で期待値自体を計算する形に修正。**この時点で�
    1番のバグを検出できなかった）。
    （コミット `c23548c`）
 
-この2周で見つけた教訓は`testing.md`に3件追記済み（`grep -qx`ではなく
+3回目のpush→CI: 2回目の修正（`samePath`）にもかかわらず**同じ
+`Access is denied`エラーが再発。** 原因は`samePath`の実装そのものが
+甘かったこと——`filepath.Abs`＋`Clean`＋大文字小文字無視の**パス文字列
+比較だけ**で「自分自身かどうか」を判定していたが、Windowsでは
+`os.Executable()`が返すパスと`os.Getwd()`から組み立てたパスが、
+**同じファイルを指していても文字列としては異なる表現になりうる**
+（例: 一方にだけ短縮8.3形式のパス要素`RUNNER~1`が含まれる、とCIの
+エラーメッセージから推測）。**両ファイルが実在するなら`os.SameFile`
+（OSレベルのファイル同一性、Windowsはボリューム＋ファイルインデックス）
+で判定するよう修正**——パス文字列比較は、比較対象がまだ存在しない
+（`.snapshot`の典型的な使われ方）場合のみのフォールバックとした。
+仕様書§11・testing.mdを実装に合わせて更新（コミット、次回push分）。
+
+**教訓:** Windows特有の問題は、1回の修正で仕留められるとは限らない
+（今回は3周目でようやく根本原因＝パス比較ロジック自体の甘さに到達した）。
+「パスが同じかどうか」の判定は、可能な限り最初から`os.SameFile`を使うべき
+だった。
+
+この3周で見つけた教訓は`testing.md`に4件追記済み（`grep -qx`ではなく
 部分一致を使うこと、退避ファイルの削除タイミングはOS依存、`.snapshot`の
-自己上書き検証は弱いアサーションで済ませないこと）。
+自己上書き検証は弱いアサーションで済ませないこと、パスの同一性判定は
+文字列比較ではなく`os.SameFile`を使うこと）。
 
 - **Step 1（足場固め）**: `go.mod`/`go.sum`（`modernc.org/sqlite v1.58.0`）・
   `Makefile`・`.gitattributes`/`.gitignore`・`PostToolUse`フック

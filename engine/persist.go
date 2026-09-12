@@ -61,15 +61,26 @@ func (db *DB) Snapshot(path string) error {
 	return writeImageAtomic(path, engineBytes, data)
 }
 
-// samePath reports whether a and b name the same file, without requiring
-// either to exist (unlike os.SameFile, which stats both): Snapshot's
-// target usually doesn't exist yet, so this compares cleaned absolute
-// paths instead. Windows path comparison is case-insensitive
-// (NTFS/Windows semantics); elsewhere it is case-sensitive. This is a
-// best-effort check for the common case (naming.md's default-name rule
-// naturally recreating self's own path) -- it does not resolve symlinks
-// or hard links to a distinct-looking path onto the same file.
+// samePath reports whether a and b name the same file. When both exist,
+// it defers to os.SameFile, which compares OS-level file identity
+// (volume + file index on Windows, device + inode on Unix) rather than
+// the path spelling -- necessary in practice, not just in theory: a
+// pure string comparison of filepath.Abs(a)/filepath.Abs(b) (even
+// case-folded) was confirmed insufficient on windows-latest CI, where
+// os.Executable() and the equivalent path built from os.Getwd() can
+// legitimately spell the same directory differently (e.g. a short
+// 8.3-style path component such as "RUNNER~1" appearing in one but not
+// the other). Snapshot's target commonly does NOT exist yet, though (a
+// brand-new snapshot name), so when either os.Stat fails, this falls
+// back to comparing cleaned absolute paths -- case-insensitively on
+// Windows (NTFS/Windows semantics), case-sensitively elsewhere.
 func samePath(a, b string) bool {
+	if fa, errA := os.Stat(a); errA == nil {
+		if fb, errB := os.Stat(b); errB == nil {
+			return os.SameFile(fa, fb)
+		}
+	}
+
 	absA, errA := filepath.Abs(a)
 	absB, errB := filepath.Abs(b)
 	if errA != nil || errB != nil {
