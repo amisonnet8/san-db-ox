@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -86,9 +87,17 @@ func TestCmdSchemaAllAndFiltered(t *testing.T) {
 // deliberately lives in a directory the test never os.Chdir()s into, so
 // the assertions would fail if cmdSnapshot resolved the default name
 // against filepath.Dir(self) instead of the process's actual CWD.
+//
+// self and the explicit name are both run through snapshotFilename to
+// compute what cmdSnapshot should actually produce, rather than assuming
+// the extension-less literal: on Windows, a real os.Executable() always
+// ends in ".exe", and snapshotFilename appends ".exe" to any
+// extension-less base -- a bare "fake-self"/"mydb" would silently become
+// "fake-self.exe"/"mydb.exe" there, which is exactly the mismatch that
+// broke this test on windows-latest CI before this fix.
 func TestCmdSnapshotDefaultAndExplicitName(t *testing.T) {
 	selfDir := t.TempDir()
-	self := filepath.Join(selfDir, "fake-self")
+	self := filepath.Join(selfDir, snapshotFilename("fake-self", runtime.GOOS))
 	if err := os.WriteFile(self, []byte("x"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -101,19 +110,21 @@ func TestCmdSnapshotDefaultAndExplicitName(t *testing.T) {
 	if err := cmdSnapshot(db, self, nil, &out); err != nil {
 		t.Fatalf("cmdSnapshot (default name): %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(cwd, "fake-self")); err != nil {
-		t.Fatalf("expected a snapshot at CWD/fake-self: %v", err)
+	wantDefault := snapshotFilename(filepath.Base(self), runtime.GOOS)
+	if _, err := os.Stat(filepath.Join(cwd, wantDefault)); err != nil {
+		t.Fatalf("expected a snapshot at CWD/%s: %v", wantDefault, err)
 	}
 
 	out.Reset()
 	if err := cmdSnapshot(db, self, []string{"mydb"}, &out); err != nil {
 		t.Fatalf("cmdSnapshot (explicit name): %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(cwd, "mydb")); err != nil {
-		t.Fatalf("expected a snapshot at CWD/mydb: %v", err)
+	wantExplicit := snapshotFilename("mydb", runtime.GOOS)
+	if _, err := os.Stat(filepath.Join(cwd, wantExplicit)); err != nil {
+		t.Fatalf("expected a snapshot at CWD/%s: %v", wantExplicit, err)
 	}
-	if !strings.Contains(out.String(), "mydb") {
-		t.Fatalf("cmdSnapshot output = %q, want it to mention the written path", out.String())
+	if !strings.Contains(out.String(), wantExplicit) {
+		t.Fatalf("cmdSnapshot output = %q, want it to mention %q", out.String(), wantExplicit)
 	}
 }
 
