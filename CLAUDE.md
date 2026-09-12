@@ -48,6 +48,9 @@ ExecDBのコードや設計を参照する場合も、判断は必ず SanDBox �
   `go install`、リポジトリへのバイナリ非コミット方針）
 - **`.claude/rules/binary-size.md`** — 実行ファイルサイズ（積極的な最適化は
   不要だが、むやみに肥大化する実装は避ける）
+- **`.claude/rules/sqlite-quirks.md`** — SQLite/`modernc.org/sqlite`特有の
+  落とし穴（Backup APIの挙動、`memdb` VFS固有の制約等、仕様書だけでは
+  判断できない実装上の注意点）
 
 これらのルールファイルは、実装中に得た細かい気づき・教訓を Claude Code 自身が
 育てていくものである。新しく気づいたルール・過去に踏んだ落とし穴などがあれば、
