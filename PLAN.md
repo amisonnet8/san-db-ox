@@ -111,6 +111,17 @@ importしていないことをCIが検証している。
     書き込みトランザクションを保持中の場合、busy_timeoutが正しく効き
     （約200ms待って解放されたケースで228ms後に成功）、即エラーにはならない
     ことを確認。`ErrBusy`へのマッピング方針の裏付け。
+- **Step 3（`Load`/`LoadFrom`実装中）で追加発覚した制約**: `NewRestore`で
+  WALモードのSQLiteファイルを**生きているインメモリDB（`memdb`）へ直接**
+  Backupすると、`Step 0`の検証A/Bだけでは見えなかった問題が起きることが
+  実装中に判明した。Backup APIはコピー先が空の場合、ソースのヘッダバイト
+  （journal_modeフラグ含む）をそのまま複製する。通常のファイルVFSは
+  対応する`-wal`ファイルが無いWALヘッダのDBでも問題なく開けるが、
+  **`memdb`はこれを開けず「データベースファイルを開けません」で失敗する**
+  （`restoreFrom`自体は成功を返すのに、直後のクエリで失敗するという
+  分かりにくい壊れ方をした）。対処として、ソース→一時ファイル（ファイル
+  VFS）→`journal_mode=DELETE`でロールバックモードへ変換→生きているDB、
+  という2段階のBackup構成に変更した（仕様書§11に反映済み）。
   - 仕様書§4/§6/§10/§11を更新（`.load`のWAL挙動、`NewRestore`/`Deserialize`の
     使い分け、`FileInfo`/`FileKind`/`LoadFrom`/`Complete`のAPI追加、
     `Session`とSnapshot/Export/Loadの`ErrBusy`関係、`Complete`の実装方式）。

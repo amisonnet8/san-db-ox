@@ -40,10 +40,12 @@ type DB struct {
 
 // HasData reports whether this DB was populated with data when it was
 // opened (spec §13's startup banner, stdio "inspect" op's has_data
-// field). It does not track whether the DB has since been written to;
-// it is set once, at Open/OpenSelf time. The fuller Inspect/Info API
-// (naming.md) belongs to a later phase -- this exists only because the
-// Phase 1 Step 4 REPL banner needs it now.
+// field). It is set once, at Open/OpenSelf time, and deliberately does
+// not change afterward -- in particular, Load and LoadFrom (load.go)
+// never touch it, even though they do replace the live database's
+// content: has_data's spec §7 definition is what this process started
+// with, a fact about how it was launched, not a live description of its
+// current content (spec §10).
 func (db *DB) HasData() bool {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
@@ -78,17 +80,20 @@ func newDB() (*DB, error) {
 	return &DB{sdb: sdb, keeper: keeper, dsn: dsn}, nil
 }
 
-// Open loads path as a plain SQLite database file into a new in-memory
-// database (spec §6, §10: "独自のデータファイル形式は存在しない"). A
-// path that does not exist, or one that is empty, yields an empty
-// database rather than an error.
+// Open loads path into a new in-memory database, auto-detecting its
+// format the same way Load does (spec §6, §10: "独自のデータファイル形式
+// は存在しない") -- a plain SQLite database file, or a SanDBox executable
+// (its data only, never its engine bytes). A path that does not exist, or
+// one that is zero-length, yields an empty database rather than an
+// error, so Open works as an "open or create" drop-in the way a plain
+// sqlite file path would.
 func Open(path string) (*DB, error) {
 	db, err := newDB()
 	if err != nil {
 		return nil, err
 	}
 
-	blob, err := os.ReadFile(path)
+	st, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return db, nil
@@ -96,12 +101,13 @@ func Open(path string) (*DB, error) {
 		db.Close()
 		return nil, err
 	}
-	if len(blob) == 0 {
+	if st.Size() == 0 {
 		return db, nil
 	}
-	if err := loadBlobInto(blob, db.dsn); err != nil {
+
+	if err := db.Load(path); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("engine: %s: %w", path, err)
+		return nil, err
 	}
 	db.hasData = true
 	return db, nil
@@ -132,14 +138,7 @@ func OpenSelf() (*DB, error) {
 		return db, nil
 	}
 
-	f, err := os.Open(self)
-	if err != nil {
-		db.Close()
-		return nil, err
-	}
-	blob := make([]byte, fi.dataLength)
-	_, err = f.ReadAt(blob, fi.dataOffset)
-	f.Close()
+	blob, err := readRange(self, fi.dataOffset, fi.dataLength)
 	if err != nil {
 		db.Close()
 		return nil, err
