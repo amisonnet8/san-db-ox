@@ -25,9 +25,12 @@ const (
 )
 
 // footerInfo is what a trailing footer says about a file, if anything.
-// It stays unexported: the public Inspect(path) API (naming.md) belongs
-// to a later phase. OpenSelf/Snapshot/Overwrite only need this
-// internally in Phase 1.
+// It stays unexported: it is a purely internal fact ("is there a footer,
+// and where does the data start") that OpenSelf/Snapshot/Overwrite/
+// readEnginePrefix need, none of which care whether path is even a
+// SQLite file. The public Inspect(path) API (inspect.go) wraps this into
+// the richer FileInfo/FileKind pair callers actually want, rather than
+// folding SQLite-header detection into footerInfo itself.
 type footerInfo struct {
 	hasData    bool
 	version    uint32
@@ -60,22 +63,41 @@ func readFooter(path string) (footerInfo, int64, error) {
 	if _, err := f.ReadAt(buf, size-FooterSize); err != nil {
 		return footerInfo{}, 0, err
 	}
-	if string(buf[0:8]) != Magic {
-		return footerInfo{}, size, nil
+
+	fi, err := decodeFooter(buf, size)
+	if err != nil {
+		return footerInfo{}, 0, fmt.Errorf("engine: %s: %w", path, err)
+	}
+	return fi, size, nil
+}
+
+// decodeFooter parses a FooterSize-byte trailing footer against the total
+// size, in bytes, of whatever it came from, and reports what it says.
+// This is the byte-slice-only half of readFooter's logic, split out so
+// LoadFrom (load.go) can run the same decoding against bytes already read
+// from an io.Reader instead of re-implementing it against a file. footer
+// may be shorter than FooterSize (or nil) if size < FooterSize; a footer
+// whose magic doesn't match, or a size too small to hold one, means "no
+// footer" (hasData=false in the result), not an error -- only a footer
+// whose magic matches but whose fields are inconsistent with size is an
+// error.
+func decodeFooter(footer []byte, size int64) (footerInfo, error) {
+	if size < FooterSize || string(footer[0:8]) != Magic {
+		return footerInfo{}, nil
 	}
 
-	dataOffset := int64(binary.BigEndian.Uint64(buf[12:20]))
-	dataLength := int64(binary.BigEndian.Uint64(buf[20:28]))
+	dataOffset := int64(binary.BigEndian.Uint64(footer[12:20]))
+	dataLength := int64(binary.BigEndian.Uint64(footer[20:28]))
 	if dataOffset < 0 || dataLength < 0 || dataLength > MaxDataSize || dataOffset+dataLength+FooterSize != size {
-		return footerInfo{}, 0, fmt.Errorf("engine: %s: corrupt footer (offset=%d length=%d size=%d)", path, dataOffset, dataLength, size)
+		return footerInfo{}, fmt.Errorf("corrupt footer (offset=%d length=%d size=%d)", dataOffset, dataLength, size)
 	}
 
 	return footerInfo{
 		hasData:    true,
-		version:    binary.BigEndian.Uint32(buf[8:12]),
+		version:    binary.BigEndian.Uint32(footer[8:12]),
 		dataOffset: dataOffset,
 		dataLength: dataLength,
-	}, size, nil
+	}, nil
 }
 
 // encodeFooter builds the trailing footer for an image whose engine

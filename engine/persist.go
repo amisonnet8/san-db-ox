@@ -181,19 +181,45 @@ func readEnginePrefix(path string) ([]byte, error) {
 	return buf, nil
 }
 
+// tempFileFor creates a temporary file in the same directory as path, so
+// a later os.Rename onto path is a same-filesystem (and therefore atomic)
+// move rather than a cross-filesystem copy (spec §11). Shared by
+// writeImageAtomic (below) and Export (export.go), which differ in what
+// they put in the file and what permissions it ends up with, but agree on
+// this much.
+func tempFileFor(path string) (*os.File, error) {
+	return os.CreateTemp(filepath.Dir(path), ".san-db-ox_tmp_*")
+}
+
+// removeTempArtifacts removes tmpPath and the SQLite sidecar files
+// ("-journal", "-wal", "-shm") a connection writing to tmpPath may have
+// created alongside it. writeImageAtomic never produces sidecars (it
+// writes engineBytes+data+footer directly, never through a SQLite
+// connection), but calls this anyway to share one cleanup path with
+// Export (export.go), which does write tmpPath through SQLite's Backup
+// API and can leave sidecars behind on failure. Every removal is
+// best-effort and silently ignores a missing file: this exists to be
+// called from a deferred cleanup path, where the original error already
+// matters more than a cleanup failure would.
+func removeTempArtifacts(tmpPath string) {
+	os.Remove(tmpPath)
+	os.Remove(tmpPath + "-journal")
+	os.Remove(tmpPath + "-wal")
+	os.Remove(tmpPath + "-shm")
+}
+
 // writeImageAtomic writes engineBytes+data+footer to path via a
 // temporary file in the same directory followed by a rename, so a reader
 // never observes a half-written file (spec §11). The output is always
 // executable (0755): Snapshot's output is meant to be run directly
 // (spec §1, §9).
 func writeImageAtomic(path string, engineBytes, data []byte) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".san-db-ox_tmp_*")
+	tmp, err := tempFileFor(path)
 	if err != nil {
 		return err
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath) // no-op once the rename below succeeds
+	defer removeTempArtifacts(tmpPath) // no-op once the rename below succeeds
 
 	if err := writeImage(tmp, engineBytes, data); err != nil {
 		tmp.Close()
@@ -289,4 +315,40 @@ func overwriteSelf(selfPath string, engineBytes, data []byte) error {
 
 	os.Remove(oldPath)
 	return nil
+}
+
+// fileDSN turns an absolute OS path into a DSN modernc.org/sqlite's
+// driver will open as a plain file (not the memdb VFS), for Export
+// (export.go) and Load's SQLite-file restore path (load.go via
+// restoreFrom, backup.go).
+//
+// The driver's newConn treats a DSN that does not start with "file:" as
+// a bare path to open verbatim, except that it still splits off
+// everything from the first "?" onward and reads it as driver parameters
+// (modernc.org/sqlite's conn.go). This has two consequences here:
+//   - path must not itself contain "?": on Unix a path legally could,
+//     and if it did, everything from that "?" onward would silently be
+//     dropped from the path the driver actually opens rather than
+//     erroring, so fileDSN rejects it upfront instead.
+//   - path must be absolute: a relative path that happened to start
+//     with "file:" would otherwise be reparsed as a URI instead of
+//     opened verbatim. Every caller runs path through filepath.Abs
+//     first, which structurally rules this out (a Windows absolute path
+//     starts with a drive letter, a Unix one with "/", neither of which
+//     spells "file:").
+//
+// Backslashes need no translation: since the result never starts with
+// "file:", it is never URI-parsed, and reaches the OS's own path-opening
+// call (e.g. Windows CreateFile) exactly as given.
+//
+// fileDSN takes advantage of the "?"-stripping behavior above to append
+// _busy_timeout without it ever reaching the OS as part of the path,
+// matching the live database's own busy_timeout (engine.go) so a
+// conflicting writer on the file blocks briefly rather than failing
+// immediately.
+func fileDSN(path string) (string, error) {
+	if strings.ContainsRune(path, '?') {
+		return "", fmt.Errorf("engine: %s: path must not contain '?'", path)
+	}
+	return fmt.Sprintf("%s?_busy_timeout=%d", path, defaultBusyTimeoutMS), nil
 }
