@@ -20,12 +20,12 @@ chmod +x san-db-ox
 SanDBox v0.1.0
 No embedded data. Starting with an empty in-memory database.
 Enter ".help" for usage hints.
-sandbox> CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
-sandbox> INSERT INTO users VALUES (1, 'alice');
-sandbox> SELECT * FROM users;
+SanDBox> CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
+SanDBox> INSERT INTO users VALUES (1, 'alice');
+SanDBox> SELECT * FROM users;
 1|alice
-sandbox> .snapshot mydb
-sandbox> .exit
+SanDBox> .snapshot mydb
+SanDBox> .exit
 ```
 
 `mydb` は**それ自体が実行可能なファイル**になっている。配れば、受け取った人が

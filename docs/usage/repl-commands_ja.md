@@ -42,7 +42,7 @@ stdioプロトコルでは、対応する op として提供される。
 ## 出力モード（`.mode`）
 
 ```
-sandbox> SELECT id, name FROM users;
+SanDBox> SELECT id, name FROM users;
 ```
 
 **`list`（既定）** — `|` 区切り、ヘッダなし、NULLは空文字列
@@ -91,10 +91,10 @@ name = bob
 しても、データは保存されず消える。保存確認のプロンプトも出ない。
 
 ```
-sandbox> .snapshot mydb          # ./mydb（実行ファイル）を生成
-sandbox> .snapshot mydb --sqlite # ./mydb.sqlite（SQLiteファイル）を生成
-sandbox> .snapshot --timestamp   # ./san-db-ox_20260901120000 を生成
-sandbox> .overwrite              # 自分自身を書き換えて終了
+SanDBox> .snapshot mydb          # ./mydb（実行ファイル）を生成
+SanDBox> .snapshot mydb --sqlite # ./mydb.sqlite（SQLiteファイル）を生成
+SanDBox> .snapshot --timestamp   # ./san-db-ox_20260901120000 を生成
+SanDBox> .overwrite              # 自分自身を書き換えて終了
 ```
 
 `.snapshot --sqlite` で生成したファイルは、DBeaver / DB Browser for SQLite /
@@ -113,10 +113,10 @@ SQLiteファイルでも同じコマンドで取り込める。取り込みは�
 ./san-db-ox.exe
 
 # 2. データを取り込む
-sandbox> .load mydb_from_linux
+SanDBox> .load mydb_from_linux
 
 # 3. そのバイナリ自身に書き込む
-sandbox> .overwrite
+SanDBox> .overwrite
 ```
 
 `.load` は取り込み元のエンジン部分を一切参照しないため、この手順で

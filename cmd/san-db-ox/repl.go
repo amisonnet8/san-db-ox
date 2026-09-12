@@ -9,14 +9,11 @@ import (
 	"github.com/amisonnet8/san-db-ox/engine"
 )
 
-// prompt is the REPL's line prompt. "sandbox" is the product name's
-// third-tier, length-constrained spelling (naming.md); an interactive
-// prompt typed on every line is exactly that kind of context, the same
-// reasoning sqlite3's own CLI applies to its "sqlite> " prompt despite
-// the product being named "sqlite3". docs/usage/repl-commands_ja.md's
-// example already used this spelling as a placeholder; this is now the
-// settled choice (PLAN.md "未確認事項" #2).
-const prompt = "sandbox> "
+// prompt is the REPL's line prompt: the display name (spec §0's naming
+// slot table), matching the startup banner's "SanDBox v..." line rather
+// than any of the operational lowercase tiers (naming.md) -- settled in
+// PLAN.md "未確認事項" #2.
+const prompt = "SanDBox> "
 
 // runREPL reads SQL statements and dot commands from in, one line at a
 // time, until EOF (Ctrl+D) or a command that requests exit (spec §3,
