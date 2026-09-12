@@ -14,8 +14,9 @@ Windows/macOSや複数CPUアーキテクチャでの動作確認（GitHub Action
    確認する。網羅性は求めない。`.overwrite`（自己上書き）もこのフェーズに
    含める（一番ハック的な部分であり、早期に全体の中で動作確認する価値が
    高いため）。
-2. **②`engine`ライブラリ開発**: ①の土台の上で本格的に作り込む。`Session`、
-   `Load`（種別自動判別）、`Export`、`Inspect`、`LoadFrom`、`Complete`。
+2. **②`engine`ライブラリ開発【完了】**: ①の土台の上で本格的に作り込む。
+   `Session`、`Load`（種別自動判別）、`Export`、`Inspect`、`LoadFrom`、
+   `Complete`。
 3. **③REPL開発**: REPLコマンド体系を本格的に作り込む。ドットコマンド一式、
    出力モード5種、Ctrl+Cの状態機械。
 4. **④バッチ実行・stdioプロトコル開発**: `-c`/stdinによる非対話実行、終了
@@ -90,8 +91,11 @@ importしていないことをCIが検証している。
 
 ## 現在地
 
-**フェーズ②（`engine`ライブラリ本格開発）着手中。** Step 0（仕様書更新＋
-技術検証スパイク）完了。以下Step 1〜7を順に進める。
+**フェーズ②（`engine`ライブラリ本格開発）完了。** `Inspect`/`FileInfo`・
+`Load`/`LoadFrom`・`Export`・`Session`・`Complete`をすべて実装し、
+`make check`・`make race`ともにgreen。次はフェーズ③（REPL開発、
+`.load`/`.snapshot --sqlite`/複数行入力の`cmd/san-db-ox`への接続を含む）に
+着手する。
 
 ### フェーズ②の進捗
 
@@ -124,7 +128,46 @@ importしていないことをCIが検証している。
   という2段階のBackup構成に変更した（仕様書§11に反映済み）。
   - 仕様書§4/§6/§10/§11を更新（`.load`のWAL挙動、`NewRestore`/`Deserialize`の
     使い分け、`FileInfo`/`FileKind`/`LoadFrom`/`Complete`のAPI追加、
-    `Session`とSnapshot/Export/Loadの`ErrBusy`関係、`Complete`の実装方式）。
+    `Session`とSnapshot/Export/Loadの`ErrBusy`関係、`Complete`の実装方式）
+    （コミット `13c8950`）。
+- **Step 1（内部リファクタ＋バグ修正）**: `backupInto`が`Step`失敗時に
+  `Finish()`を呼んでいなかった実バグを発見・修正（`runBackup`に集約）。
+  `NewRestore`用の`restorer`/`restoreFrom`、`SQLITE_BUSY`→`ErrBusy`の
+  `mapBusy`、`decodeFooter`（`readFooter`から切り出し）、
+  `tempFileFor`/`removeTempArtifacts`（`writeImageAtomic`から切り出し）、
+  `fileDSN`（OSパス→ドライバDSN変換）を追加。バグ修正は「壊す→検出できる
+  ことを確認→戻す」で実際に回帰テストが機能することを確認済み
+  （コミット `632fa06`）。
+- **Step 2（`Inspect`/`FileInfo`）**: `FileKind`（Unknown/SQLite/
+  Executable）と`FileInfo`を追加。判別順は先頭16バイトのSQLiteヘッダを
+  優先。実装中に「ディレクトリがKindUnknownをエラー無しで返してしまう」
+  不具合（`os.Open`/`Stat`はディレクトリでも成功し、`Size()`が0になりうる
+  ため）を発見し`IsRegular()`チェックを追加（コミット `09ae896`）。
+- **Step 3（`Load`/`LoadFrom`、`Open`の載せ替え）**: 実装中に発覚した設計
+  変更（上記「Step 3で追加発覚した制約」参照、2段階Backup方式）を反映。
+  `Open`も同じ判別ロジックへ載せ替え、SanDBox実行ファイルも受け付けるよう
+  になった。`HasData`は`Load`では変化しない（確定判断3）
+  （コミット `400b925`）。
+- **Step 4（`Export`）**: `backupInto`を使いSQLiteファイルへ書き出し。
+  パーミッションは`0644`（`Snapshot`の`0755`とは異なる）。
+  `tempFileFor`/`removeTempArtifacts`を`persist.go`と共有
+  （コミット `a5d8766`）。
+- **Step 5（`Session`）**: 専有コネクション。`Begin`/`BeginTx`は持たない
+  設計（ExecDB踏襲）。`newLiveDB`のコネクションプールに上限を設けない
+  理由をコメント化。実装中に2件、テストの前提が実際の`memdb`挙動と
+  食い違うことが判明——(1) `memdb`のSHAREDロックは書き込み中の他接続を
+  ブロックしうる（ExecDBが`sqlite-quirks.md`で既に記録済みの落とし穴と
+  同じ）、(2) `DB.Close()`は開いたままの`Session`の接続を即座には奪わない
+  （`database/sql`の仕様どおりで、docコメントに書いた設計と一致）。
+  いずれも実装のバグではなくテストの期待を実際の挙動へ修正
+  （コミット `5724cb4`）。
+- **Step 6（`Complete`）**: ExecDBの実装（`Xsqlite3_complete`を
+  `modernc.org/libc`のTLS経由で呼ぶ）をそのまま移植。`go mod tidy`で
+  `modernc.org/libc`がdirect依存へ昇格（`go.sum`は不変）。`cmd/san-db-ox`が
+  `modernc.org/sqlite/lib`・`modernc.org/libc`を直接importしていないことを
+  確認（コミット `f50a421`）。
+- **Step 7（並行性テストと仕上げ）**: `engine/concurrency_test.go`
+  （`make race`専用、6テスト）、`engine/doc.go`更新、本節の更新。
 
 ### フェーズ①の記録
 
