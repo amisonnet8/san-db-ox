@@ -9,10 +9,11 @@ SanDBoxの実装計画・進捗管理ドキュメント。実装が進むにつ�
 Windows/macOSや複数CPUアーキテクチャでの動作確認（GitHub Actions等）を行う
 サイクルを繰り返す（詳細は `.claude/rules/testing.md` 参照）。
 
-1. **①ミニマム実装（技術検証フェーズ）**: `engine`ライブラリ・REPLの2要素を、
-   最小限の機能で薄く繋げて実装し、全体が技術的に成立するかを確認する。
-   網羅性は求めない。`.overwrite`（自己上書き）もこのフェーズに含める
-   （一番ハック的な部分であり、早期に全体の中で動作確認する価値が高いため）。
+1. **①ミニマム実装（技術検証フェーズ）【完了】**: `engine`ライブラリ・REPLの
+   2要素を、最小限の機能で薄く繋げて実装し、全体が技術的に成立するかを
+   確認する。網羅性は求めない。`.overwrite`（自己上書き）もこのフェーズに
+   含める（一番ハック的な部分であり、早期に全体の中で動作確認する価値が
+   高いため）。
 2. **②`engine`ライブラリ開発**: ①の土台の上で本格的に作り込む。`Session`、
    `Load`（種別自動判別）、`Export`、`Inspect`、`LoadFrom`、`Complete`。
 3. **③REPL開発**: REPLコマンド体系を本格的に作り込む。ドットコマンド一式、
@@ -72,83 +73,8 @@ importしていないことをCIが検証している。
 
 ## 現在地
 
-**フェーズ①（ミニマム実装）はStep 1〜5の実装自体は完了しているが、
-GitHub Actions 3OSマトリクス（`test.yml`）はまだgreenになっていない。**
-ユーザーがpush→CI実行→エラー報告、を2周行い、**Windows特有の実バグを
-2件発見・修正済み**（下記）。ローカル（Linux）では`make check`・
-`make test`・`make race`すべてgreen。**次にユーザーが再度pushしてCIが
-greenになることを確認できたら、正式にフェーズ①完了としてフェーズ②へ進む。**
-
-### Windows CIで発見した実バグ（Step 5後の修正、pushフィードバックより。現在4周目）
-
-1回目のpush→CI: `check (windows-latest)`が`TestCmdSnapshotDefaultAndExplicitName`
-で失敗。原因は`cmd/san-db-ox/dotcmd_test.go`が拡張子なしのファイル名を
-期待値に使っていたが、Windowsでは`snapshotFilename`が`.exe`を自動付与する
-ため実際の出力先とズレていた（テスト側の不備）。`snapshotFilename(...,
-runtime.GOOS)`で期待値自体を計算する形に修正。**この時点でついでに
-`tests/e2e.sh`側にも同型の不備（`.snapshot`の明示名・競合テストのターゲット
-パスが拡張子なし）を発見し先回りで修正**（コミット`3113bbd`、`f31b45e`）。
-
-2回目のpush→CI: `make test`が2箇所で失敗。
-1. **`Error: rename ... Access is denied.`**（`.snapshot`が自分自身の
-   パスへ書き込もうとした際）。`FILENAME`省略時のデフォルト名（実行中
-   バイナリ名がベース）はCWDが実行ファイルの場所と同じなら自分自身の
-   パスと一致するため、これは実際の使用シーンでも起こりうる本物の
-   バグだった。**Linuxでは一時ファイル＋`rename`が自分自身のパスに
-   対しても成功する（偶然）が、Windowsでは失敗する。** `engine.Snapshot`が
-   保存先を自分自身と検知した場合、`.overwrite`と同じ退避方式
-   （`overwriteSelf`）に自動的に切り替えるよう修正（`samePath`ヘルパー、
-   `go run`一時バイナリガードも同じ分岐に適用）。仕様書§11に追記。
-2. **`.san-db-ox.old`退避ファイルが`.overwrite`直後に残っていた。**
-   これは**バグではなく仕様書§11で最初から想定されていた挙動**
-   （Windowsは実行中は退避ファイルを削除できず、次回起動時に
-   ベストエフォートで削除される）。`tests/e2e.sh`のアサーションが
-   「`.overwrite`直後」に確認していたのが誤りで、「次にバイナリを
-   起動した後」に確認する形へ修正。あわせて`.snapshot`の自己上書き
-   検証も「ファイルが存在するだけ」の弱いアサーションから、
-   「新しいデータが実際に読めること」まで確認する形に強化（でないと
-   1番のバグを検出できなかった）。
-   （コミット `c23548c`）
-
-3回目のpush→CI: 2回目の修正（`samePath`）にもかかわらず**同じ
-`Access is denied`エラーが再発。** 原因は`samePath`の実装そのものが
-甘かったこと——`filepath.Abs`＋`Clean`＋大文字小文字無視の**パス文字列
-比較だけ**で「自分自身かどうか」を判定していたが、Windowsでは
-`os.Executable()`が返すパスと`os.Getwd()`から組み立てたパスが、
-**同じファイルを指していても文字列としては異なる表現になりうる**
-（例: 一方にだけ短縮8.3形式のパス要素`RUNNER~1`が含まれる、とCIの
-エラーメッセージから推測）。**両ファイルが実在するなら`os.SameFile`
-（OSレベルのファイル同一性、Windowsはボリューム＋ファイルインデックス）
-で判定するよう修正**——パス文字列比較は、比較対象がまだ存在しない
-（`.snapshot`の典型的な使われ方）場合のみのフォールバックとした。
-仕様書§11・testing.mdを実装に合わせて更新（コミット `6bddbf9`）。
-
-**教訓:** Windows特有の問題は、1回の修正で仕留められるとは限らない
-（今回は3周目でようやく根本原因＝パス比較ロジック自体の甘さに到達した）。
-「パスが同じかどうか」の判定は、可能な限り最初から`os.SameFile`を使うべき
-だった。
-
-4回目のpush→CI: `.snapshot`の自己上書き検証（3回目で修正したばかりの箇所）
-は通ったが、**別の箇所で新しいエラー**——
-`open \tmp\tmp.KgmQGL04Is\.san-db-ox_tmp_...: The system cannot find the
-path specified.` が「並行`.snapshot`」テストで発生。原因は**製品コードでは
-なく`tests/e2e.sh`側**: 競合テストの保存先パス（`$WORK/raced-snapshot.exe`）を
-標準入力ごしにテキストとして渡していたが、`$WORK`はGit Bash（MSYS）形式の
-パス（`/tmp/tmp.XXXXXXXX`）であり、**MSYSの自動パス変換は`argv`・環境変数
-経由でネイティブプロセスを起動する時にしか働かず、パイプ経由の標準入力
-バイト列は変換対象外**だった。Goのパス解決が先頭`/`を「カレントドライブの
-ルート」と誤解釈し、存在しない場所を探しに行っていた。**対処:** 競合
-`.snapshot`テストを、既に「デフォルト名」テストで使っていた「対象
-ディレクトリへ`cd`してからベアな相対ファイル名だけを渡す」方式に書き換え。
-あわせて`go install`の`GOBIN`（環境変数として渡す絶対パス）も、
-`cygpath -w`で明示的にWindowsネイティブ形式へ変換する`native_path()`
-ヘルパーを新設して防御的に修正（未検証だが同種のリスクがあるため先回り）。
-
-この4周で見つけた教訓は`testing.md`に5件追記済み（`grep -qx`ではなく
-部分一致を使うこと、退避ファイルの削除タイミングはOS依存、`.snapshot`の
-自己上書き検証は弱いアサーションで済ませないこと、パスの同一性判定は
-文字列比較ではなく`os.SameFile`を使うこと、MSYSのパス自動変換はパイプ
-経由のテキストには効かないこと）。
+**フェーズ①（ミニマム実装）完了。GitHub Actions 3OSマトリクス（`test.yml`）
+green確認済み。** 次はフェーズ②（`engine`ライブラリ本格開発）に着手する。
 
 - **Step 1（足場固め）**: `go.mod`/`go.sum`（`modernc.org/sqlite v1.58.0`）・
   `Makefile`・`.gitattributes`/`.gitignore`・`PostToolUse`フック
@@ -166,40 +92,44 @@ path specified.` が「並行`.snapshot`」テストで発生。原因は**製�
   6種（`.tables`/`.schema`/`.snapshot`/`.overwrite`/`.exit`・`.quit`/`.help`）
   を`dispatchDotCommand`に集約。REPLプロンプトは`SanDBox> `（表示名採用、
   ユーザー指示により`sandbox> `から変更）（コミット `f16a3a4`、`4eb45ed`）。
-- **Step 5（E2E自動化・CI）**: 今回のセッションで実施。
-  - **`tests/e2e.sh`**（`make test`が`build`に依存して実行）: REPL基本操作
-    （CREATE/INSERT/.tables/.schema/SELECT/エラー処理）、`-h`/`-v`/不正引数
-    （終了コード2）、`.exit CODE`/EOF終了、`.snapshot`（明示名・既定名
-    双方）、`.overwrite`（2周、退避ファイル残留なし確認）、**複数プロセス
-    独立性**（同一バイナリのコピーを2プロセス同時起動してDBが独立している
-    ことを確認）、**同一バイナリへの並行読み取り**（4プロセスが同じ実行
-    ファイルのフッターを同時に読んでも競合しない）、**`.snapshot`の並行
-    書き込み**（2プロセスが同じ出力先へ同時に`.snapshot`しても壊れた
-    ファイルが観測されない——アトミックなrename方式の実地検証）、
-    `go install`で入れたバイナリでの`.overwrite`動作、を検証。3回連続実行で
-    フレーキーでないことを確認済み（Linux）。
-  - **見つけたバグ:** `Makefile`の`build`が`go build -o san-db-ox`のまま
-    だと、Windowsでは`.exe`拡張子が付かずnaming.md違反になることが判明
-    （`-o`指定時はGoが拡張子を自動補完しない）。`BIN :=
-    san-db-ox$(shell go env GOEXE)`変数を導入して修正。
-  - **`make netcheck`を新設**し`check`に組み込み: `engine`・`cmd/san-db-ox`
-    が`net`/`net/http`を直接importしていないこと、`net/http`が推移的にも
-    現れないことを`go list`で検証（`net`自体は`modernc.org/libc`経由で
-    許容——testing.md参照）。
-  - **`.github/workflows/test.yml`を新規作成**（ExecDBの構成を参考に、
-    SanDBox向けに`make test`（e2e）もCIマトリクスに含める形へ拡張——
-    ExecDB自身のCIは`make check`のみでe2eは含めていなかったが、PLAN.mdの
-    フェーズ①完了判定が「Windowsでの`.overwrite`含む」e2eのgreenを要求する
-    ため）。`check`ジョブ（3OS×`make check`+`make test`）、`race`ジョブ
-    （ubuntu/macosのみ）、`trivy`ジョブ（脆弱性・ライセンス）。
-  - **ルール追記:** `testing.md`に2件（REPLプロンプトが改行なしのため
-    `grep -qx`ではなく部分一致を使うべきこと／`windows-latest`に`make`が
-    無く`choco install make -y`が必要なこと）。`distribution.md`の
-    `go install`動作確認を実測確認済みに更新（未確認事項4番を解消）。
+- **Step 5（E2E自動化・CI）**: `tests/e2e.sh`（REPL基本操作、`-h`/`-v`/
+  不正引数、`.exit CODE`/EOF、`.snapshot`、`.overwrite`、複数プロセス
+  独立性・並行読み取り・並行`.snapshot`、`go install`）、
+  `.github/workflows/test.yml`（3OS`check`+`race`+`trivy`）、
+  `make netcheck`（`net`/`net/http`非依存の検証）を新設。
+  `Makefile`の`build`が`-o san-db-ox`のままだとWindowsで`.exe`拡張子が
+  付かない不具合を発見・修正（`BIN := san-db-ox$(shell go env GOEXE)`）。
 
-**次にやること:** リポジトリをpush → GitHub Actions 3OSマトリクスが
-greenであることを確認 → フェーズ②（`engine`ライブラリ本格開発:
-`Session`/`Load`/`Export`/`Inspect`/`LoadFrom`/`Complete`）に着手。
+### Windows CIで踏んだ落とし穴（push→CI確認を4周、すべて解消済み）
+
+Step 5実装後、ユーザーがpush→CI実行→エラー報告を4周繰り返し、そのたびに
+実バグ・テスト不備を発見・修正した。**詳細な経緯はgitログ（コミット
+`3113bbd`〜`3db1ecb`）に残しているため、ここでは結論のみ:**
+
+1. テストの期待ファイル名がWindowsの`.exe`自動付与を考慮していなかった
+   （`cmd/san-db-ox/dotcmd_test.go`・`tests/e2e.sh`の両方）。
+2. **`.snapshot`（デフォルト名）が実行中バイナリ自身のパスと一致すると、
+   Windowsでは一時ファイル＋`rename`方式が「アクセスが拒否されました」で
+   失敗する**（Linuxでは偶然成功する）。`engine.Snapshot`が保存先を自分自身と
+   検知したら`.overwrite`と同じ退避方式に自動切替するよう修正——本物の
+   製品バグ（仕様書§11に追記）。
+3. 上記の自己検知ロジック（`samePath`）が**パス文字列比較だけ**では
+   不十分だった（`os.Executable()`とパス結合で得たパスが、同じファイルを
+   指していても文字列としては異なりうる——短縮8.3形式のパス要素等）。
+   `os.SameFile`（OSレベルのファイル同一性）を使うよう修正。
+4. `.san-db-ox.old`退避ファイルの削除タイミングはOS依存（Windowsは次回
+   起動時）という**仕様書に最初から書かれていた挙動**を、テストの
+   アサーションのタイミングが考慮していなかった（バグではなくテスト不備）。
+5. Git Bash（MSYS）のパス自動変換は`argv`・環境変数経由でネイティブ
+   プロセスを起動する時にしか働かず、**パイプ経由の標準入力テキストには
+   効かない**——`tests/e2e.sh`が`$WORK`ベースの絶対パスを標準入力に
+   埋め込んでいた箇所で発覚。
+
+**教訓（`testing.md`に反映済み）:** Windows特有の問題は1回の修正で
+仕留められるとは限らない。パスの同一性判定は最初から`os.SameFile`を
+使うべきだった。テストスクリプトでOS依存の絶対パスをネイティブ
+プロセスへ渡す際は、それが`argv`/環境変数経由か、パイプ経由かで
+MSYSの自動変換が効くかどうかが変わることを意識する。
 
 ## 未確認事項（実装前に決める・確かめる）
 
