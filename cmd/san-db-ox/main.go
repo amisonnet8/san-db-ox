@@ -55,8 +55,30 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	defer db.Close()
 
-	printBanner(stdout, db, self)
-	return runREPL(db, self, stdin, stdout, stderr)
+	interactive := isInteractive(stdin)
+	if interactive {
+		printBanner(stdout, db, self)
+	}
+	return runREPL(db, self, stdin, stdout, stderr, interactive, &options{})
+}
+
+// isInteractive reports whether in looks like a terminal (spec §13): a
+// non-interactive run (piped/redirected stdin) prints no prompt, no
+// continuation prompt, and no banner, and gets no SIGINT handler
+// (.claude/rules/cli-output.md). Only *os.File carries an OS-level mode
+// bit to check; anything else (a test's strings.Reader, for instance) is
+// treated as non-interactive, since no test wants a live terminal's
+// tty-only stimuli (SIGINT among them, Step 6).
+func isInteractive(in io.Reader) bool {
+	f, ok := in.(*os.File)
+	if !ok {
+		return false
+	}
+	stat, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return stat.Mode()&os.ModeCharDevice != 0
 }
 
 func printUsage(w io.Writer) {

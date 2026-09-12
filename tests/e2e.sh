@@ -59,7 +59,7 @@ native_path() {
 # --- REPL: CREATE/INSERT/.tables/.schema/SELECT/error handling (spec §3) ---
 cp "$BIN" "$WORK/repl1$EXE"
 chmod +x "$WORK/repl1$EXE"
-out="$(printf 'CREATE TABLE t(a INTEGER, b TEXT);\nINSERT INTO t VALUES (1, %s);\n.tables\n.schema t\nSELECT * FROM t;\nnot valid sql\n.exit\n' "'x'" \
+out="$(printf 'CREATE TABLE t(a INTEGER, b TEXT);\nINSERT INTO t VALUES (1, %s);\n.tables\n.schema t\nSELECT * FROM t;\nnot valid sql;\n.exit\n' "'x'" \
   | "$WORK/repl1$EXE" 2>&1)"
 echo "$out" | grep -q 'CREATE TABLE t' || fail ".schema t did not show the CREATE statement (got: $out)"
 echo "$out" | grep -q '1|x' || fail "SELECT did not return the inserted row (got: $out)"

@@ -457,6 +457,53 @@ func TestSessionAfterDBCloseFailsButCloseIsSafe(t *testing.T) {
 	}
 }
 
+// TestSessionSurvivesCanceledQuery confirms a Session stays usable after a
+// query running on it is canceled via context, not just after a query
+// that fails or returns an error normally (TestSessionUseAfterCloseReturnsErrClosed
+// only covers the Close case). Phase 3's REPL Ctrl+C state machine cancels
+// the in-flight statement's context on the first interrupt while keeping
+// the REPL's single Session open for the next statement (spec §2, §13) --
+// this test pins the assumption that makes that design sound.
+func TestSessionSurvivesCanceledQuery(t *testing.T) {
+	db, err := newDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	sess, err := db.Session(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	// A deliberately long-running query: modernc.org/sqlite checks for
+	// context cancellation between VM steps, so this is expected to be
+	// interrupted well before it completes on its own.
+	const longQuery = `WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt WHERE x < 500000000) SELECT count(*) FROM cnt`
+	rows, err := sess.QueryContext(ctx, longQuery)
+	if err == nil {
+		rows.Close()
+	}
+	// Either outcome (canceled before or after the query itself returned)
+	// is acceptable here -- what matters is what follows: the Session's
+	// underlying connection must still be usable afterward.
+
+	var x int
+	if err := sess.QueryRow("SELECT 1").Scan(&x); err != nil {
+		t.Fatalf("Session unusable after a canceled query: %v", err)
+	}
+	if x != 1 {
+		t.Fatalf("SELECT 1 = %d, want 1", x)
+	}
+}
+
 func tableRowCount(t *testing.T, db *DB, table string) int {
 	t.Helper()
 	var cnt int

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -21,6 +22,18 @@ func newTestDB(t *testing.T) *engine.DB {
 	return db
 }
 
+// newTestRepl builds a repl backed by a fresh Session on db, writing to
+// out/errw, for testing dot-command handlers directly.
+func newTestRepl(t *testing.T, db *engine.DB, self string, out, errw *bytes.Buffer) *repl {
+	t.Helper()
+	sess, err := db.Session(context.Background())
+	if err != nil {
+		t.Fatalf("db.Session: %v", err)
+	}
+	t.Cleanup(func() { sess.Close() })
+	return &repl{db: db, sess: sess, self: self, opts: &options{}, mode: modeList, out: out, errw: errw}
+}
+
 func TestCmdTablesExcludesSqliteInternal(t *testing.T) {
 	db := newTestDB(t)
 	if _, err := db.Exec("CREATE TABLE b (x TEXT)"); err != nil {
@@ -30,8 +43,9 @@ func TestCmdTablesExcludesSqliteInternal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var out bytes.Buffer
-	if err := cmdTables(db, &out); err != nil {
+	var out, errw bytes.Buffer
+	r := newTestRepl(t, db, "self", &out, &errw)
+	if err := r.cmdTables(); err != nil {
 		t.Fatalf("cmdTables: %v", err)
 	}
 	got := strings.Fields(out.String())
@@ -56,8 +70,9 @@ func TestCmdSchemaAllAndFiltered(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var all bytes.Buffer
-	if err := cmdSchema(db, nil, &all); err != nil {
+	var all, errw bytes.Buffer
+	r := newTestRepl(t, db, "self", &all, &errw)
+	if err := r.cmdSchema(nil); err != nil {
 		t.Fatalf("cmdSchema (all): %v", err)
 	}
 	if !strings.Contains(all.String(), "CREATE TABLE t") || !strings.Contains(all.String(), "CREATE TABLE other") {
@@ -65,7 +80,8 @@ func TestCmdSchemaAllAndFiltered(t *testing.T) {
 	}
 
 	var filtered bytes.Buffer
-	if err := cmdSchema(db, []string{"t"}, &filtered); err != nil {
+	r2 := newTestRepl(t, db, "self", &filtered, &errw)
+	if err := r2.cmdSchema([]string{"t"}); err != nil {
 		t.Fatalf("cmdSchema (t): %v", err)
 	}
 	out := filtered.String()
@@ -106,8 +122,9 @@ func TestCmdSnapshotDefaultAndExplicitName(t *testing.T) {
 	t.Chdir(cwd)
 	db := newTestDB(t)
 
-	var out bytes.Buffer
-	if err := cmdSnapshot(db, self, nil, &out); err != nil {
+	var out, errw bytes.Buffer
+	r := newTestRepl(t, db, self, &out, &errw)
+	if err := r.cmdSnapshot(nil); err != nil {
 		t.Fatalf("cmdSnapshot (default name): %v", err)
 	}
 	wantDefault := snapshotFilename(filepath.Base(self), runtime.GOOS)
@@ -116,7 +133,7 @@ func TestCmdSnapshotDefaultAndExplicitName(t *testing.T) {
 	}
 
 	out.Reset()
-	if err := cmdSnapshot(db, self, []string{"mydb"}, &out); err != nil {
+	if err := r.cmdSnapshot([]string{"mydb"}); err != nil {
 		t.Fatalf("cmdSnapshot (explicit name): %v", err)
 	}
 	wantExplicit := snapshotFilename("mydb", runtime.GOOS)
@@ -129,26 +146,27 @@ func TestCmdSnapshotDefaultAndExplicitName(t *testing.T) {
 }
 
 func TestCmdExit(t *testing.T) {
-	res, err := cmdExit(nil)
-	if err != nil || !res.exit || res.code != 0 {
-		t.Fatalf("cmdExit(nil) = %+v, %v; want exit=true code=0", res, err)
+	exit, code, err := cmdExit(nil)
+	if err != nil || !exit || code != 0 {
+		t.Fatalf("cmdExit(nil) = %v, %v, %v; want exit=true code=0", exit, code, err)
 	}
 
-	res, err = cmdExit([]string{"7"})
-	if err != nil || !res.exit || res.code != 7 {
-		t.Fatalf("cmdExit([7]) = %+v, %v; want exit=true code=7", res, err)
+	exit, code, err = cmdExit([]string{"7"})
+	if err != nil || !exit || code != 7 {
+		t.Fatalf("cmdExit([7]) = %v, %v, %v; want exit=true code=7", exit, code, err)
 	}
 
-	if _, err := cmdExit([]string{"not-a-number"}); err == nil {
+	if _, _, err := cmdExit([]string{"not-a-number"}); err == nil {
 		t.Fatalf("expected an error for a non-numeric exit code")
 	}
 }
 
-func TestDispatchDotCommandUnknown(t *testing.T) {
+func TestHandleDotCommandUnknown(t *testing.T) {
 	db := newTestDB(t)
 	var out, errw bytes.Buffer
-	res := dispatchDotCommand(db, "self", ".nope", &out, &errw)
-	if res.exit {
+	r := newTestRepl(t, db, "self", &out, &errw)
+	exit, _ := r.handleDotCommand(".nope")
+	if exit {
 		t.Fatalf("unknown command should not request exit")
 	}
 	if !strings.Contains(errw.String(), ".nope") {
@@ -156,32 +174,34 @@ func TestDispatchDotCommandUnknown(t *testing.T) {
 	}
 }
 
-func TestDispatchDotCommandExit(t *testing.T) {
+func TestHandleDotCommandExit(t *testing.T) {
 	db := newTestDB(t)
 	var out, errw bytes.Buffer
-	res := dispatchDotCommand(db, "self", ".exit 3", &out, &errw)
-	if !res.exit || res.code != 3 {
-		t.Fatalf("dispatchDotCommand(.exit 3) = %+v, want exit=true code=3", res)
+	r := newTestRepl(t, db, "self", &out, &errw)
+	exit, code := r.handleDotCommand(".exit 3")
+	if !exit || code != 3 {
+		t.Fatalf("handleDotCommand(.exit 3) = %v, %v, want exit=true code=3", exit, code)
 	}
 
 	out.Reset()
 	errw.Reset()
-	res = dispatchDotCommand(db, "self", ".quit", &out, &errw)
-	if !res.exit || res.code != 0 {
-		t.Fatalf("dispatchDotCommand(.quit) = %+v, want exit=true code=0", res)
+	exit, code = r.handleDotCommand(".quit")
+	if !exit || code != 0 {
+		t.Fatalf("handleDotCommand(.quit) = %v, %v, want exit=true code=0", exit, code)
 	}
 }
 
-// TestDispatchDotCommandOverwriteInGoTest documents that .overwrite
-// cannot succeed from `go test` (its binary lives under a go-build* temp
-// dir; see engine's TestOverwriteRejectsGoTestBinary) and confirms the
-// dispatcher does NOT set exit=true when the underlying Overwrite call
-// fails.
-func TestDispatchDotCommandOverwriteInGoTest(t *testing.T) {
+// TestHandleDotCommandOverwriteInGoTest documents that .overwrite cannot
+// succeed from `go test` (its binary lives under a go-build* temp dir;
+// see engine's TestOverwriteRejectsGoTestBinary) and confirms the
+// dispatcher does NOT report exit=true when the underlying Overwrite
+// call fails.
+func TestHandleDotCommandOverwriteInGoTest(t *testing.T) {
 	db := newTestDB(t)
 	var out, errw bytes.Buffer
-	res := dispatchDotCommand(db, "self", ".overwrite", &out, &errw)
-	if res.exit {
+	r := newTestRepl(t, db, "self", &out, &errw)
+	exit, _ := r.handleDotCommand(".overwrite")
+	if exit {
 		t.Fatalf("expected .overwrite to fail (and not request exit) under go test")
 	}
 	if !strings.Contains(errw.String(), "Error:") {
@@ -189,7 +209,7 @@ func TestDispatchDotCommandOverwriteInGoTest(t *testing.T) {
 	}
 }
 
-func TestCmdHelpListsOnlyPhase1Commands(t *testing.T) {
+func TestCmdHelpListsOnlyImplementedCommands(t *testing.T) {
 	var out bytes.Buffer
 	cmdHelp(&out)
 	for _, want := range []string{".tables", ".schema", ".snapshot", ".overwrite", ".exit", ".help"} {
