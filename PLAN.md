@@ -79,7 +79,7 @@ GitHub Actions 3OSマトリクス（`test.yml`）はまだgreenになってい�
 `make test`・`make race`すべてgreen。**次にユーザーが再度pushしてCIが
 greenになることを確認できたら、正式にフェーズ①完了としてフェーズ②へ進む。**
 
-### Windows CIで発見した実バグ（Step 5後の修正、pushフィードバックより。現在3周目）
+### Windows CIで発見した実バグ（Step 5後の修正、pushフィードバックより。現在4周目）
 
 1回目のpush→CI: `check (windows-latest)`が`TestCmdSnapshotDefaultAndExplicitName`
 で失敗。原因は`cmd/san-db-ox/dotcmd_test.go`が拡張子なしのファイル名を
@@ -128,10 +128,27 @@ runtime.GOOS)`で期待値自体を計算する形に修正。**この時点で�
 「パスが同じかどうか」の判定は、可能な限り最初から`os.SameFile`を使うべき
 だった。
 
-この3周で見つけた教訓は`testing.md`に4件追記済み（`grep -qx`ではなく
+4回目のpush→CI: `.snapshot`の自己上書き検証（3回目で修正したばかりの箇所）
+は通ったが、**別の箇所で新しいエラー**——
+`open \tmp\tmp.KgmQGL04Is\.san-db-ox_tmp_...: The system cannot find the
+path specified.` が「並行`.snapshot`」テストで発生。原因は**製品コードでは
+なく`tests/e2e.sh`側**: 競合テストの保存先パス（`$WORK/raced-snapshot.exe`）を
+標準入力ごしにテキストとして渡していたが、`$WORK`はGit Bash（MSYS）形式の
+パス（`/tmp/tmp.XXXXXXXX`）であり、**MSYSの自動パス変換は`argv`・環境変数
+経由でネイティブプロセスを起動する時にしか働かず、パイプ経由の標準入力
+バイト列は変換対象外**だった。Goのパス解決が先頭`/`を「カレントドライブの
+ルート」と誤解釈し、存在しない場所を探しに行っていた。**対処:** 競合
+`.snapshot`テストを、既に「デフォルト名」テストで使っていた「対象
+ディレクトリへ`cd`してからベアな相対ファイル名だけを渡す」方式に書き換え。
+あわせて`go install`の`GOBIN`（環境変数として渡す絶対パス）も、
+`cygpath -w`で明示的にWindowsネイティブ形式へ変換する`native_path()`
+ヘルパーを新設して防御的に修正（未検証だが同種のリスクがあるため先回り）。
+
+この4周で見つけた教訓は`testing.md`に5件追記済み（`grep -qx`ではなく
 部分一致を使うこと、退避ファイルの削除タイミングはOS依存、`.snapshot`の
 自己上書き検証は弱いアサーションで済ませないこと、パスの同一性判定は
-文字列比較ではなく`os.SameFile`を使うこと）。
+文字列比較ではなく`os.SameFile`を使うこと、MSYSのパス自動変換はパイプ
+経由のテキストには効かないこと）。
 
 - **Step 1（足場固め）**: `go.mod`/`go.sum`（`modernc.org/sqlite v1.58.0`）・
   `Makefile`・`.gitattributes`/`.gitignore`・`PostToolUse`フック

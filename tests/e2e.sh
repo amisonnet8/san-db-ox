@@ -34,6 +34,26 @@ trap cleanup EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "ok - $*"; }
 
+# native_path converts an MSYS/Unix-style path (e.g. from $WORK, which
+# comes from mktemp -d under Git Bash on Windows) into the Windows-native
+# form a spawned native process actually needs -- as an argument or
+# environment variable, MSYS/Cygwin's CreateProcess-boundary translation
+# normally handles this automatically, but that translation never
+# applies to bytes flowing through a pipe (confirmed on windows-latest
+# CI: an MSYS path piped as ".snapshot <path>" text was misread as
+# rooted at the current drive, e.g. "/tmp/x" as "\tmp\x", not "MSYS
+# root"). Callers that embed a $WORK-derived path in piped stdin content
+# must route it through this first; a path passed as a plain argv/exec
+# target does not need it. Identity outside Windows, or if `cygpath`
+# (part of Git for Windows) isn't on PATH.
+native_path() {
+  if [ -n "$EXE" ] && command -v cygpath >/dev/null 2>&1; then
+    cygpath -w "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
 [ -x "$BIN" ] || fail "$BIN not found or not executable; run 'make build' first"
 
 # --- REPL: CREATE/INSERT/.tables/.schema/SELECT/error handling (spec §3) ---
@@ -167,16 +187,29 @@ done
 pass "multi-process: several processes reading the same binary's footer concurrently all succeed"
 
 # --- concurrent .snapshot to the SAME target path never observes a
-# corrupted/partial file (spec §11's atomic temp+rename write) ---
+# corrupted/partial file (spec §11's atomic temp+rename write).
+#
+# The target is a BARE relative filename, given to .snapshot from a
+# process whose CWD is $WORK (cd'd inside the subshell), not an absolute
+# $WORK-prefixed path -- same reason as the explicit-name check above,
+# but sharper here: $WORK's value (from mktemp -d under Git Bash) is
+# MSYS/Unix-style, and MSYS/Cygwin's automatic path translation only
+# rewrites argv when launching a native process, never arbitrary bytes
+# flowing through a pipe. Embedding it directly in the piped ".snapshot
+# <path>" text confirmed broken on windows-latest CI: Go's Windows path
+# handling read the leading "/" as "root of the current drive", not
+# "MSYS root", and looked for the file under a nonexistent "\tmp\..."
+# rather than the real temp directory. ---
 cp "$BIN" "$WORK/racer1$EXE"
 cp "$BIN" "$WORK/racer2$EXE"
 chmod +x "$WORK/racer1$EXE" "$WORK/racer2$EXE"
-TARGET="$WORK/raced-snapshot$EXE"
-( printf 'CREATE TABLE t(v TEXT);\nINSERT INTO t VALUES (%s);\n.snapshot %s\n.exit\n' "'from-racer1'" "$TARGET" | "$WORK/racer1$EXE" >/dev/null ) &
+TARGET_NAME="raced-snapshot$EXE"
+( cd "$WORK" && printf 'CREATE TABLE t(v TEXT);\nINSERT INTO t VALUES (%s);\n.snapshot %s\n.exit\n' "'from-racer1'" "$TARGET_NAME" | exec "./racer1$EXE" >/dev/null ) &
 r1=$!
-( printf 'CREATE TABLE t(v TEXT);\nINSERT INTO t VALUES (%s);\n.snapshot %s\n.exit\n' "'from-racer2'" "$TARGET" | "$WORK/racer2$EXE" >/dev/null ) &
+( cd "$WORK" && printf 'CREATE TABLE t(v TEXT);\nINSERT INTO t VALUES (%s);\n.snapshot %s\n.exit\n' "'from-racer2'" "$TARGET_NAME" | exec "./racer2$EXE" >/dev/null ) &
 r2=$!
 wait "$r1" "$r2"
+TARGET="$WORK/$TARGET_NAME"
 [ -f "$TARGET" ] || fail "concurrent .snapshot to the same path did not produce a file"
 chmod +x "$TARGET"
 out="$(printf 'SELECT * FROM t;\n.exit\n' | "$TARGET" 2>&1)"
@@ -187,7 +220,7 @@ pass ".snapshot: two processes racing to the same target path never leaves a cor
 #     still works (.claude/rules/distribution.md) ---
 GOBIN="$WORK/gobin"
 mkdir -p "$GOBIN"
-(cd "$ROOT" && GOBIN="$GOBIN" go install ./cmd/san-db-ox)
+(cd "$ROOT" && GOBIN="$(native_path "$GOBIN")" go install ./cmd/san-db-ox)
 [ -x "$GOBIN/san-db-ox$EXE" ] || fail "go install did not produce a binary"
 cp "$GOBIN/san-db-ox$EXE" "$WORK/installed$EXE"
 chmod +x "$WORK/installed$EXE"
