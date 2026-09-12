@@ -43,6 +43,10 @@ func (r *repl) handleDotCommand(line string) (exit bool, code int) {
 		}
 	case ".load":
 		err = r.cmdLoad(args)
+	case ".dump":
+		err = r.cmdDump(args)
+	case ".import":
+		err = r.cmdImport(args)
 	case ".exit", ".quit":
 		exit, code, err = cmdExit(args)
 	case ".help":
@@ -249,6 +253,8 @@ func cmdHelp(out interface{ Write([]byte) (int, error) }) {
                         (--sqlite) a plain SQLite file
 .overwrite              Save into this executable and exit
 .load FILE              Replace the in-memory database with FILE's data
+.dump [PATTERN]         Render the schema and data as SQL text
+.import FILE TABLE      Import CSV data into TABLE, creating it if needed
 .exit [CODE]            Exit (alias: .quit)
 .help                   Show this message
 `)

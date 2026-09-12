@@ -368,17 +368,15 @@ func TestHandleDotCommandOverwriteInGoTest(t *testing.T) {
 	}
 }
 
-func TestCmdHelpListsOnlyImplementedCommands(t *testing.T) {
+// TestCmdHelpListsAllImplementedCommands confirms every dot command this
+// build supports is advertised in ".help" (spec §3's full list is now
+// implemented as of Phase 3 Step 5).
+func TestCmdHelpListsAllImplementedCommands(t *testing.T) {
 	var out bytes.Buffer
 	cmdHelp(&out)
-	for _, want := range []string{".tables", ".schema", ".mode", ".headers", ".snapshot", ".overwrite", ".load", ".exit", ".help"} {
+	for _, want := range []string{".tables", ".schema", ".mode", ".headers", ".snapshot", ".overwrite", ".load", ".dump", ".import", ".exit", ".help"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("cmdHelp output missing %q", want)
-		}
-	}
-	for _, notYet := range []string{".import", ".dump"} {
-		if strings.Contains(out.String(), notYet) {
-			t.Errorf("cmdHelp output should not advertise unimplemented %q yet", notYet)
 		}
 	}
 }
