@@ -72,69 +72,62 @@ importしていないことをCIが検証している。
 
 ## 現在地
 
-**フェーズ①Step 4（`cmd/san-db-ox` — CLI・バナー・REPL最小実装）完了。**
-フェーズ①の残りはStep 5（E2E自動化・CI）のみ。
+**フェーズ①（ミニマム実装）完了。Step 1〜5すべて完了。** ローカルでの
+`make check`・`make test`はgreen。GitHub Actions 3OSマトリクス
+（`test.yml`）は今回のセッションで新規作成したのみで、実際のCI実行結果は
+（pushはユーザーが行うため）未確認——**次にリポジトリがpushされ、CIが
+green であることを確認したら、正式にフェーズ①完了としてフェーズ②へ進む。**
 
 - **Step 1（足場固め）**: `go.mod`/`go.sum`（`modernc.org/sqlite v1.58.0`）・
   `Makefile`・`.gitattributes`/`.gitignore`・`PostToolUse`フック
   （コミット `529e2fd`）。
 - **Step 2（技術検証スパイク）**: 確定事項（上表）の再確認、未確認事項1番
   （`Serialize()`出力の妥当性）を解消（コミット `33dcd41`）。
-- **Step 3（`engine`パッケージ最小実装）**: `footer.go`/`serialize.go`/
-  `backup.go`/`engine.go`/`persist.go`/`errors.go`。`DB`型、
-  `Open`/`OpenSelf`/`Exec`系/`Close`/`Snapshot`/`Overwrite`。
-  **設計判断:** `Snapshot`は`Open`/`OpenSelf`のどちらで開いたかに依存せず、
-  呼び出し時点の`os.Executable()`を毎回読み直してエンジンバイトを決定する
-  （仕様書§10「ここでの『エンジンバイト』はホストアプリのバイナリ全体」に
-  整合させるため、ExecDBの「Open時にsourcePath/engineSizeをキャッシュする」
-  方式とは意図的に変えた——設計判断は別物、CLAUDE.md）。ユニットテスト20件
-  （`go test`・`-race`ともgreen）＋実バイナリでの`OpenSelf`→`Overwrite`→
-  再起動ループの実機確認（コミット `c912358`）。
+- **Step 3（`engine`パッケージ最小実装）**: `DB`型、
+  `Open`/`OpenSelf`/`Exec`系/`Close`/`Snapshot`/`Overwrite`。`Snapshot`は
+  `os.Executable()`を呼び出しのたびに読み直す設計（ExecDBの
+  sourcePath/engineSizeキャッシュ方式とは意図的に変更）。ユニットテスト20件
+  （コミット `c912358`）。
 - **Step 4（`cmd/san-db-ox`最小実装）**: `main.go`/`banner.go`/`repl.go`/
-  `dotcmd.go`/`filename.go`を実装。
-  - **起動:** 引数なしでREPL起動（`engine.OpenSelf()`）。`-h`/`--help`、
-    `-v`/`--version`のみ対応、それ以外の引数は使用法エラー（終了コード2）。
-    `-c`/`--serve-stdio`/`-i`/`-r`/`-m`/`-o`/`-t`/`-q`はすべて未実装
-    （後続フェーズ）。
-  - **バナー（仕様書§13）:** `engine.DB`に`HasData() bool`を追加
-    （`Open`/`OpenSelf`が実データを読み込んだ場合に`true`。`Inspect`/
-    `Info()`公開APIはフェーズ②で追加、Step 4のバナー実装に最小限必要な
-    ものだけ先に切り出した）。
-  - **REPLプロンプト:** `SanDBox> `に確定（表示名をそのまま使用、起動バナー
-    と表記を揃える。仕様書§0の表記スロット表・未確認事項2番を参照。当初
-    `sandbox> `（第3段）で実装したが、ユーザー指示によりバナーと同じ
-    `SanDBox> `へ変更した）。
-  - **SQL実行方式:** `db.Query()`一本化で実測確認済み——DDL/DML/SELECTの
-    いずれも`Query()`が使え、非SELECT文は0カラムの空結果になるだけで
-    エラーにならない（modernc.org/sqlite実測）。出力は`.mode list`相当
-    （`|`区切り・ヘッダなし・NULLは空文字列）に固定、本格的な出力モード
-    切替はフェーズ③。
-  - **ドットコマンド（6種、共通処理として`dispatchDotCommand`に集約
-    ——directory-structure.mdの「3つの実行モードは同じドットコマンド
-    実装を共有する」原則を先取り）:** `.tables`/`.schema [TABLE]`/
-    `.snapshot [FILENAME]`（`--sqlite`/`--timestamp`は未対応、
-    ファイル名省略時は実行中バイナリ名をベースにカレントディレクトリへ
-    生成）/`.overwrite`/`.exit [CODE]`・`.quit [CODE]`/`.help`
-    （実装済みコマンドのみ列挙）。
-  - **テスト:** `filename_test.go`/`dotcmd_test.go`/`repl_test.go`
-    （`go test`・`-race`ともgreen）。`.snapshot`の既定ファイル名が
-    「実行ファイルの場所」ではなく「プロセスのカレントディレクトリ」
-    基準であることを`t.Chdir`で明示的に検証（testing.mdのe2e落とし穴
-    節と同じ注意点）。
-  - **実機確認（`.overwrite`）:** `make build`相当の実バイナリをコピーし、
-    REPL経由で`.overwrite`→再起動→`SELECT`→追記→`.overwrite`→再起動→
-    `SELECT`を3周実行。データの永続化・退避ファイル（`.san-db-ox.old`）が
-    残らないことを確認。`.snapshot`（名前省略・明示指定の両方）・
-    `-h`/`-v`/不正引数（終了コード2）・`.exit CODE`・EOF終了・`.quit`も
-    実機確認済み。
-  - **Makefile修正:** `build`ターゲットが`go build ./...`のままだと
-    複数パッケージ扱いになりバイナリが一切生成されないことが判明
-    （`go help build`: 複数パッケージ指定時は出力を捨てて構文チェックのみ）。
-    `go build -o san-db-ox ./cmd/san-db-ox`に修正。
+  `dotcmd.go`/`filename.go`。`-h`/`-v`のみのCLI、起動バナー、
+  `db.Query()`一本化のSQL実行（`.mode list`相当の固定出力）、ドットコマンド
+  6種（`.tables`/`.schema`/`.snapshot`/`.overwrite`/`.exit`・`.quit`/`.help`）
+  を`dispatchDotCommand`に集約。REPLプロンプトは`SanDBox> `（表示名採用、
+  ユーザー指示により`sandbox> `から変更）（コミット `f16a3a4`、`4eb45ed`）。
+- **Step 5（E2E自動化・CI）**: 今回のセッションで実施。
+  - **`tests/e2e.sh`**（`make test`が`build`に依存して実行）: REPL基本操作
+    （CREATE/INSERT/.tables/.schema/SELECT/エラー処理）、`-h`/`-v`/不正引数
+    （終了コード2）、`.exit CODE`/EOF終了、`.snapshot`（明示名・既定名
+    双方）、`.overwrite`（2周、退避ファイル残留なし確認）、**複数プロセス
+    独立性**（同一バイナリのコピーを2プロセス同時起動してDBが独立している
+    ことを確認）、**同一バイナリへの並行読み取り**（4プロセスが同じ実行
+    ファイルのフッターを同時に読んでも競合しない）、**`.snapshot`の並行
+    書き込み**（2プロセスが同じ出力先へ同時に`.snapshot`しても壊れた
+    ファイルが観測されない——アトミックなrename方式の実地検証）、
+    `go install`で入れたバイナリでの`.overwrite`動作、を検証。3回連続実行で
+    フレーキーでないことを確認済み（Linux）。
+  - **見つけたバグ:** `Makefile`の`build`が`go build -o san-db-ox`のまま
+    だと、Windowsでは`.exe`拡張子が付かずnaming.md違反になることが判明
+    （`-o`指定時はGoが拡張子を自動補完しない）。`BIN :=
+    san-db-ox$(shell go env GOEXE)`変数を導入して修正。
+  - **`make netcheck`を新設**し`check`に組み込み: `engine`・`cmd/san-db-ox`
+    が`net`/`net/http`を直接importしていないこと、`net/http`が推移的にも
+    現れないことを`go list`で検証（`net`自体は`modernc.org/libc`経由で
+    許容——testing.md参照）。
+  - **`.github/workflows/test.yml`を新規作成**（ExecDBの構成を参考に、
+    SanDBox向けに`make test`（e2e）もCIマトリクスに含める形へ拡張——
+    ExecDB自身のCIは`make check`のみでe2eは含めていなかったが、PLAN.mdの
+    フェーズ①完了判定が「Windowsでの`.overwrite`含む」e2eのgreenを要求する
+    ため）。`check`ジョブ（3OS×`make check`+`make test`）、`race`ジョブ
+    （ubuntu/macosのみ）、`trivy`ジョブ（脆弱性・ライセンス）。
+  - **ルール追記:** `testing.md`に2件（REPLプロンプトが改行なしのため
+    `grep -qx`ではなく部分一致を使うべきこと／`windows-latest`に`make`が
+    無く`choco install make -y`が必要なこと）。`distribution.md`の
+    `go install`動作確認を実測確認済みに更新（未確認事項4番を解消）。
 
-**次にやること:** フェーズ①Step 5（E2E自動化・CI）——`tests/e2e.sh`、
-GitHub Actions 3OSマトリクス（`test.yml`）、`net`/`net/http`非依存の検証を
-CI化、仕様書・ルールファイルへの確定事項の反映。
+**次にやること:** リポジトリをpush → GitHub Actions 3OSマトリクスが
+greenであることを確認 → フェーズ②（`engine`ライブラリ本格開発:
+`Session`/`Load`/`Export`/`Inspect`/`LoadFrom`/`Complete`）に着手。
 
 ## 未確認事項（実装前に決める・確かめる）
 
@@ -148,9 +141,12 @@ CI化、仕様書・ルールファイルへの確定事項の反映。
    手前、この2つだけが例外になる。意図的な非対応か、単なる漏れかを確定させる
    （`.import` を op 化する場合、ファイルパスを受け取るため `--read-only` との
    兼ね合いも決める）。
-4. **`go install` で入れたバイナリでフッター方式が機能するか。** ビルド
-   キャッシュや `GOOS`/`GOARCH` の扱いに依存するため、実機で一度確認する
-   （`.claude/rules/distribution.md`）。
+4. ~~`go install` で入れたバイナリでフッター方式が機能するか。~~
+   **Step 5で解消。** `tests/e2e.sh`（`make test`）で`GOBIN`指定の
+   `go install`→`.overwrite`→再起動→`SELECT`のループを自動検証する形にし、
+   Linuxで実測確認済み。Windows/macOSはGitHub Actions 3OSマトリクスが同じ
+   `tests/e2e.sh`を実行することで継続的に担保する（`.claude/rules/
+   distribution.md`）。
 
 ## 保留事項
 

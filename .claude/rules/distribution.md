@@ -11,8 +11,13 @@
 
 **注意点:** `go install` で生成されるバイナリも、通常の `go build` と同じ
 ビルドプロセスを経るため、フッター方式による末尾へのデータ追記・読み込みは
-同様に機能するはずである。ただし `go install` はGoのビルドキャッシュや
-`GOOS`/`GOARCH` 環境変数に依存するため、**実装時に一度動作確認をしておくこと。**
+同様に機能するはずである。
+
+**実測確認済み（フェーズ①Step 5）:** `GOBIN` を指定した `go install
+./cmd/san-db-ox` で生成したバイナリに対し、`.overwrite` でデータを埋め込み
+→再起動→`SELECT`で読み出せることを`tests/e2e.sh`で確認済み（Linux）。
+Windows/macOSでの確認はGitHub Actions 3OSマトリクス（`test.yml`）が
+`make test`（同じ`tests/e2e.sh`）をそのまま実行することで担保する。
 
 ## リポジトリへのバイナリコミットは行わない
 
