@@ -17,8 +17,8 @@ Windows/macOSや複数CPUアーキテクチャでの動作確認（GitHub Action
 2. **②`engine`ライブラリ開発【完了】**: ①の土台の上で本格的に作り込む。
    `Session`、`Load`（種別自動判別）、`Export`、`Inspect`、`LoadFrom`、
    `Complete`。
-3. **③REPL開発**: REPLコマンド体系を本格的に作り込む。ドットコマンド一式、
-   出力モード5種、Ctrl+Cの状態機械。
+3. **③REPL開発【完了】**: REPLコマンド体系を本格的に作り込む。ドットコマンド
+   一式、出力モード5種、Ctrl+Cの状態機械。
 4. **④バッチ実行・stdioプロトコル開発**: `-c`/stdinによる非対話実行、終了
    コード、JSON Lines プロトコル、op一式、`--read-only`。
 5. **⑤ドキュメント・配布**: `docs/examples/`・`docs/tour/`の作成、README、
@@ -89,13 +89,97 @@ importしていないことをCIが検証している。
 6. **Step 6: `Complete`** — `engine/complete.go`（ExecDB踏襲、`Xsqlite3_complete`）。
 7. **Step 7: 並行性テストと仕上げ** — `make race`、`PLAN.md`/ルールファイル更新。
 
+## フェーズ③のステップ
+
+スコープは `cmd/san-db-ox` と `tests/e2e.sh`（`engine`は原則変更しない。
+例外は`TestSessionSurvivesCanceledQuery`の追加のみ）。
+
+0. **Step 0: 仕様書・ルールファイルの更新** — 継続プロンプト、REPLが
+   `engine.Session`を1本保持する設計、`.mode`/`.headers`の相互作用、
+   `--snapshot-interval`失敗時の挙動、非対話時のプロンプト抑制を実装前に
+   仕様書へ反映。
+1. **Step 1: REPL基盤の作り直し** — 単一`Session`・複数行/複数文入力
+   （`engine.Complete`ベースの`splitComplete`）・非対話判定
+   （`isInteractive`）。
+2. **Step 2: 出力モード5種 + `.mode`/`.headers`** — `format.go`/`value.go`。
+3. **Step 3: CLI起動オプション** — `-m`/`-o`/`-t`/`-q`/`-i`、
+   `naming.md`のファイル名規則の完全実装、`--snapshot-interval`の
+   バックグラウンドgoroutine。
+4. **Step 4: `.snapshot`（`--sqlite`/`--timestamp`）完成＋`.load`追加。**
+5. **Step 5: `.dump`/`.import`追加。**
+6. **Step 6: Ctrl+Cの状態機械** — `interrupt.go`（ExecDB踏襲）。
+7. **Step 7: `tests/e2e.sh`拡張・ドキュメント更新・仕上げ。**
+
 ## 現在地
 
-**フェーズ②（`engine`ライブラリ本格開発）完了。** `Inspect`/`FileInfo`・
-`Load`/`LoadFrom`・`Export`・`Session`・`Complete`をすべて実装し、
-`make check`・`make race`ともにgreen。次はフェーズ③（REPL開発、
-`.load`/`.snapshot --sqlite`/複数行入力の`cmd/san-db-ox`への接続を含む）に
-着手する。
+**フェーズ③（REPL開発）完了。** ドットコマンド全種
+（`.tables`/`.schema`/`.mode`/`.headers`/`.snapshot`/`.overwrite`/`.load`/
+`.dump`/`.import`/`.exit`/`.quit`/`.help`）、出力モード5種、CLI起動オプション
+（`-m`/`-o`/`-t`/`-q`/`-i`/`-v`/`-h`）、Ctrl+Cの状態機械をすべて実装し、
+`make check`・`make race`・`make test`ともにgreen。次はフェーズ④
+（バッチ実行・stdioプロトコル開発）に着手する。
+
+### フェーズ③の進捗
+
+- **Step 0（仕様書・ルールファイルの更新）**: 継続プロンプト`   ...> `
+  （仕様書§0）、REPLが`engine.Session`を1本保持する設計とその根拠
+  （`database/sql`の`ResetSession`は開いたトランザクションをロールバック
+  しない。`sqlite-quirks.md`へ新規追記、出所: ExecDB）、`.mode`/`.headers`の
+  相互作用表（仕様書§3）、SQL文は`;`で終端すること、
+  `--snapshot-interval`の保存失敗時はstderrへ警告して継続すること
+  （仕様書§12）、非対話時はプロンプト・バナーを一切出さないこと
+  （仕様書§13、`cli-output.md`にstdout/stderrの分担も明文化）を反映
+  （コミット`8a53746`）。
+- **Step 1（REPL基盤の作り直し）**: `repl`構造体を導入し起動時に
+  `db.Session(ctx)`を1本開いてプロセス終了まで保持する設計に変更
+  （フェーズ①の`db.Query`一発呼びは複数コネクションをまたぎうる実バグ
+  だった）。SQL文の分割は自前のBEGIN/END解析ではなく`engine.Complete`を
+  文候補ごとに呼ぶ`splitComplete`に一本化。継続プロンプト・非対話時の
+  プロンプト/バナー抑制（`isInteractive`）を実装。この結果、SQL文は
+  `;`終端が必須になる仕様変更を伴った（`tests/e2e.sh`の1箇所を修正）。
+  `engine/session_test.go`に`TestSessionSurvivesCanceledQuery`を追加
+  （コミット`c288fe6`）。
+- **Step 2（出力モード5種+`.mode`/`.headers`）**: `format.go`
+  （list/column/csv/json/line）、`value.go`（`jsonValue`/`jsonReal`、
+  stdioプロトコルとの共用を見越した値変換）。REALのNaN/±Infの
+  エンコード方針（`9e999`/`-9e999`/`null`、sqlite3 CLI踏襲）をこの場で
+  決定し仕様書§7・`cli-output.md`へ反映（コミット`949eccb`）。
+- **Step 3（CLI起動オプション）**: `options.go`（`flag.FlagSet`+
+  `flag.ContinueOnError`、短縮/長い形式を同じ変数へ束縛）。
+  `filename.go`を`naming.md`の完全なルール（タイムスタンプの重複除去、
+  `.sqlite`/`.exe`拡張子補完）へ拡張。`interval.go`
+  （`--snapshot-interval`）実装中に**`stop()`が非同期のまま返っていた
+  ため、テスト用一時CWDが復元された後にバックグラウンドgoroutineの
+  書き込みが実行され、パッケージディレクトリへスナップショットファイルが
+  漏れ出す実レース**を発見・修正——`stop()`をgoroutineの終了を待つ同期的な
+  実装に変更し、`TestStartSnapshotIntervalStopBlocksUntilGoroutineExits`で
+  回帰確認（意図的に非同期版へ戻して5回連続失敗することを確認済み）
+  （コミット`5aab3c1`）。
+- **Step 4（`.snapshot`完成+`.load`追加）**: `--sqlite`/`--timestamp`の
+  順不同パース、`.load`（`engine.Inspect`によるフッターVersion不一致警告）
+  （コミット`3af4bd4`）。
+- **Step 5（`.dump`/`.import`）**: ExecDBの`cmd/execdb/{dump,import}.go`を
+  移植し、i/oを本プロジェクトの`r.out`/`r.errw`規約へ適合
+  （コミット`2210520`）。
+- **Step 6（Ctrl+Cの状態機械）**: `interrupt.go`（ExecDBの
+  `cmd/execdb/interrupt.go`をほぼそのまま移植、sqlite3 `shell.c`と同じ
+  状態機械）。`repl.run()`を`startLineReader`+`select`ベースへ再構成。
+  `script`（util-linux）経由の実バイナリへの手動PTYテストで、クエリ実行中の
+  キャンセル・アイドル時の1回破棄・連続2回でのforce-quit（終了コード1）を
+  すべて実測確認（コミット`6b7f3cd`）。
+- **Step 7（仕上げ）**: `tests/e2e.sh`に出力モード（`-m json`/`-m csv`）・
+  `.snapshot --sqlite`/`.load`（SQLiteファイル・SanDBox実行ファイル双方）・
+  `.dump`/`.import`・`--snapshot-interval`・Ctrl+C（PTY、`script`が無い環境は
+  skip）を追加。非対話時のプロンプト抑制（Step 1）により可能になった
+  `grep -qx`（完全一致）への置き換えも実施し、`testing.md`の該当の落とし穴を
+  「解消済み」に更新。**この過程で`.load`の実バグを発見**——`FileInfo.Version`は
+  `KindSQLite`では常に`0`なので、`Kind`チェックを入れずに
+  `engine.FormatVersion`と比較すると、SQLiteファイルを`.load`するたびに
+  無意味な「フォーマットバージョン不一致」警告が出ていた。`info.Kind ==
+  engine.KindExecutable`のチェックを追加し、
+  `TestCmdLoadFromSQLiteFileDoesNotWarnAboutVersion`で回帰確認（意図的に
+  チェックを外して再現することを確認済み）。`docs/usage/repl-commands_ja.md`・
+  `cli-options_ja.md`の出力例は実測と完全一致することを確認済み（変更不要）。
 
 ### フェーズ②の進捗
 

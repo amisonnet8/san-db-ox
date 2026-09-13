@@ -223,6 +223,32 @@ func TestCmdSnapshotFlagsAndFilenameInAnyOrder(t *testing.T) {
 
 // TestCmdLoadReplacesState confirms ".load" fully replaces (not merges)
 // the live DB's state (spec §4).
+// TestCmdLoadFromSQLiteFileDoesNotWarnAboutVersion is a regression test:
+// FileInfo.Version is always zero for KindSQLite (inspect.go), so
+// comparing it against engine.FormatVersion without also checking Kind
+// would spuriously warn on every plain SQLite file .load'd -- caught by
+// tests/e2e.sh's .snapshot --sqlite / .load round trip during Step 7.
+func TestCmdLoadFromSQLiteFileDoesNotWarnAboutVersion(t *testing.T) {
+	src := newTestDB(t)
+	if _, err := src.Exec("CREATE TABLE t(x); INSERT INTO t VALUES (1)"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "src.sqlite")
+	if err := src.Export(path); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := newTestDB(t)
+	var out, errw bytes.Buffer
+	r := newTestRepl(t, dst, "self", &out, &errw)
+	if err := r.cmdLoad([]string{path}); err != nil {
+		t.Fatalf("cmdLoad: %v", err)
+	}
+	if errw.Len() != 0 {
+		t.Fatalf("loading a plain SQLite file should never warn about format version, got stderr %q", errw.String())
+	}
+}
+
 func TestCmdLoadReplacesState(t *testing.T) {
 	src := newTestDB(t)
 	if _, err := src.Exec("CREATE TABLE t(x); INSERT INTO t VALUES (1)"); err != nil {

@@ -196,8 +196,12 @@ func (r *repl) cmdSnapshot(args []string) error {
 // file, auto-detected). A footer format-Version mismatch is a warning,
 // not a rejection (spec §4: "警告を表示した上で処理を続行する"); engine
 // itself never logs (§10's division of responsibility), so cmd calls
-// Inspect itself to detect this before Load runs. Inspect failing here
-// (a missing file, a directory, ...) is not itself reported -- db.Load
+// Inspect itself to detect this before Load runs. The check only
+// applies to KindExecutable: FileInfo.Version is defined as always zero
+// for every other kind (inspect.go), so comparing it against
+// engine.FormatVersion for a KindSQLite file would spuriously warn on
+// every single plain SQLite file loaded. Inspect failing here (a
+// missing file, a directory, ...) is not itself reported -- db.Load
 // below fails on the same input and surfaces a clearer error for it.
 func (r *repl) cmdLoad(args []string) error {
 	if len(args) != 1 {
@@ -205,7 +209,8 @@ func (r *repl) cmdLoad(args []string) error {
 	}
 	path := args[0]
 
-	if info, err := engine.Inspect(path); err == nil && info.HasData && info.Version != engine.FormatVersion {
+	if info, err := engine.Inspect(path); err == nil &&
+		info.Kind == engine.KindExecutable && info.HasData && info.Version != engine.FormatVersion {
 		fmt.Fprintf(r.errw, "Warning: %s has SanDBox format version %d; this build is version %d.\n", path, info.Version, engine.FormatVersion)
 	}
 
