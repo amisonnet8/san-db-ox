@@ -27,17 +27,25 @@ No embedded data. Starting with an empty in-memory database.
 Enter ".help" for usage hints.
 SanDBox> CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
 SanDBox> INSERT INTO users VALUES (1, 'alice');
-SanDBox> SELECT * FROM users;
-1|alice
-SanDBox> .snapshot mydb
-SanDBox> .exit
+SanDBox> .overwrite
+Overwrite ok, exiting.
 ```
 
-`mydb` is now **itself a runnable executable**. Hand it to someone else, and
+`.overwrite` rewrites **the running binary itself**, so `san-db-ox` is now
+itself a runnable file with the data inside it. Hand it to someone else, and
 running it brings up the same database.
 
 ```sh
-./mydb
+./san-db-ox
+```
+
+```
+SanDBox v0.1.0
+Loaded snapshot: san-db-ox
+Enter ".help" for usage hints.
+SanDBox> SELECT * FROM users;
+1|alice
+SanDBox> .exit
 ```
 
 ## Four ways to run it
