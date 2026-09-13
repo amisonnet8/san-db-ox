@@ -1,22 +1,29 @@
 #!/usr/bin/env bash
 # tests/e2e.sh -- end-to-end checks for `make test` (.claude/rules/testing.md).
 #
-# Exercises the REPL, output modes, and the full dot-command set against
-# the binary at $ROOT/san-db-ox[.exe] (built by `make build`, which
-# `make test` runs first -- see the Makefile). Batch execution (-c),
-# the stdio protocol, and --read-only are still Phase ④ scope (PLAN.md);
-# those get their own e2e coverage once that phase lands.
+# Exercises the REPL, batch execution, the stdio protocol, --read-only,
+# and the full dot-command set against the binary at $ROOT/san-db-ox[.exe]
+# (built by `make build`, which `make test` runs first -- see the
+# Makefile).
 #
 # All destructive operations (.overwrite in particular) run against a
 # COPY of the built binary in a scratch directory, never the build
 # artifact itself (.claude/rules/testing.md).
 #
-# Grep note: as of Phase 3, non-interactive stdin (piped, as every
-# invocation below is) prints no prompt at all (spec §13) -- a result
+# Grep note: as of Phase 3, non-interactive stdin (piped, as most
+# invocations below are) prints no prompt at all (spec §13) -- a result
 # line is exactly "<result>", not "SanDBox> <result>". Assertions on a
 # single, self-contained value use `grep -qx` (exact line match); ones
 # checking for a substring within a larger, multi-line block (schema
 # text, .dump output, etc) still use `grep -q`.
+#
+# Mode note: as of Phase ④, piped stdin with no -c and no --serve-stdio
+# is real batch execution (spec §5), not a permissive non-interactive
+# REPL -- an error aborts the rest of the script immediately (exit 1)
+# instead of being printed and skipped past on the way to a trailing
+# ".exit". A block below that deliberately triggers an error mid-script
+# needs `|| true` on the capturing assignment so that nonzero exit status
+# doesn't trip `set -e` (.claude/rules/testing.md's own noted pitfall).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -56,11 +63,20 @@ native_path() {
 
 [ -x "$BIN" ] || fail "$BIN not found or not executable; run 'make build' first"
 
-# --- REPL: CREATE/INSERT/.tables/.schema/SELECT/error handling (spec §3) ---
+# --- REPL: CREATE/INSERT/.tables/.schema/SELECT/error handling (spec §3).
+#
+# Piped stdin with no -c and no --serve-stdio is batch execution as of
+# Phase ④ (spec §5), not a permissive non-interactive REPL -- an error
+# now aborts the rest of the script instead of being printed and skipped
+# over on the way to ".exit". "not valid sql;" is deliberately the LAST
+# statement here so the preceding assertions (.schema/.tables/SELECT)
+# still get to run before the abort; the `|| true` keeps the resulting
+# nonzero exit status from tripping `set -e` on this assignment
+# (.claude/rules/testing.md's own noted pitfall). ---
 cp "$BIN" "$WORK/repl1$EXE"
 chmod +x "$WORK/repl1$EXE"
-out="$(printf 'CREATE TABLE t(a INTEGER, b TEXT);\nINSERT INTO t VALUES (1, %s);\n.tables\n.schema t\nSELECT * FROM t;\nnot valid sql;\n.exit\n' "'x'" \
-  | "$WORK/repl1$EXE" 2>&1)"
+out="$(printf 'CREATE TABLE t(a INTEGER, b TEXT);\nINSERT INTO t VALUES (1, %s);\n.tables\n.schema t\nSELECT * FROM t;\nnot valid sql;\n' "'x'" \
+  | "$WORK/repl1$EXE" 2>&1 || true)"
 echo "$out" | grep -q 'CREATE TABLE t' || fail ".schema t did not show the CREATE statement (got: $out)"
 echo "$out" | grep -q '1|x' || fail "SELECT did not return the inserted row (got: $out)"
 echo "$out" | grep -q 'Error:' || fail "invalid SQL did not produce an error message (got: $out)"
@@ -279,23 +295,29 @@ echo "$out" | grep -qx '2|bob' || fail ".import: row 2 missing (got: $out)"
 pass ".import: CSV bulk-load creates the table and inserts its rows"
 
 # --- --snapshot-interval (-i): periodic background saves (spec §12).
-# stdin is kept open past the first tick by a trailing `sleep` on the
-# producer side of the pipe -- the REPL only exits once stdin actually
-# reaches EOF, so this gives the ticker goroutine time to fire at least
-# once before the process terminates. ---
+#
+# Batch execution (piped stdin with no --serve-stdio) disables
+# --snapshot-interval outright as of Phase ④ (spec §5: a short-lived
+# batch run has no use for periodic saving) -- so this can no longer be
+# exercised through plain piped stdin the way it was in Phase 3. Driving
+# it through --serve-stdio instead (still one of the two modes spec §12
+# lists as supporting -i) needs no PTY: the process is kept alive with an
+# ordinary `sleep` between writing the "exec" requests and closing stdin
+# (EOF), the same way the ticker goroutine was given time to fire before.
 cp "$BIN" "$WORK/interval$EXE"
 chmod +x "$WORK/interval$EXE"
 (
   cd "$WORK" && {
-    printf 'CREATE TABLE t(a INTEGER);\nINSERT INTO t VALUES (7);\n'
+    printf '{"op":"exec","sql":"CREATE TABLE t(a INTEGER)"}\n'
+    printf '{"op":"exec","sql":"INSERT INTO t VALUES (7)"}\n'
     sleep 0.5
-  } | exec "./interval$EXE" -i 50ms -o "periodic-snap$EXE" -q
+  } | exec "./interval$EXE" --serve-stdio -i 50ms -o "periodic-snap$EXE"
 ) >/dev/null
 [ -f "$WORK/periodic-snap$EXE" ] || fail "--snapshot-interval did not produce periodic-snap$EXE"
 chmod +x "$WORK/periodic-snap$EXE"
 out="$(printf 'SELECT * FROM t;\n.exit\n' | "$WORK/periodic-snap$EXE" 2>&1)"
 echo "$out" | grep -qx '7' || fail "the periodic snapshot did not contain the seeded row (got: $out)"
-pass "--snapshot-interval: periodic background saves work in REPL mode"
+pass "--snapshot-interval: periodic background saves work in stdio mode"
 
 # --- Ctrl+C (SIGINT): sqlite3-style interrupt state machine
 # (spec §13, interrupt.go). A real PTY is required, since a plain
@@ -400,6 +422,195 @@ if command -v script >/dev/null 2>&1; then
 else
   echo "skip - REPL Ctrl+C check ('script' not found)"
 fi
+
+# --- batch execution (-c): multiple values run in order, none needing a
+# trailing ';' -- each -c argument is its own independent unit, and the
+# implicit-terminator rule applies at every argument's own end, not just
+# the whole invocation's (spec §5; this is exactly what the project's own
+# multi -c documentation example, docs/usage/cli-options_ja.md, assumes)
+cp "$BIN" "$WORK/batch1$EXE"
+chmod +x "$WORK/batch1$EXE"
+out="$("$WORK/batch1$EXE" -c "CREATE TABLE t(a INTEGER)" -c "INSERT INTO t VALUES (1)" -c "SELECT * FROM t" 2>&1)"
+echo "$out" | grep -qx '1' || fail "-c: multiple -c values did not run in order (got: $out)"
+pass "-c: multiple -c values run in order, none needing a trailing ';' (spec §5)"
+
+# --- batch execution (-c): an error aborts the remaining -c values and
+# exits with code 1 (spec §5) ---
+set +e
+out="$("$WORK/batch1$EXE" -c "CREATE TABLE t2(a)" -c "SELECT * FROM nope" -c "SELECT 999" 2>&1)"
+code=$?
+set -e
+[ "$code" -eq 1 ] || fail "-c: an error should abort with exit code 1, got $code (output: $out)"
+if echo "$out" | grep -qx '999'; then fail "-c: batch should not run the -c value after the one that failed (got: $out)"; fi
+pass "-c: an error aborts the remaining -c values and exits with code 1 (spec §5)"
+
+# --- batch execution (-c): ".exit CODE" mid-sequence stops immediately
+# with that code, same as a dot command anywhere else (spec §3, §5) ---
+set +e
+out="$("$WORK/batch1$EXE" -c "SELECT 1" -c ".exit 5" -c "SELECT 2" 2>&1)"
+code=$?
+set -e
+[ "$code" -eq 5 ] || fail "-c: .exit N mid-sequence should set the exit code and stop, got $code"
+if echo "$out" | grep -qx '2'; then fail "-c: batch should stop at .exit and not run the -c value after it (got: $out)"; fi
+pass "-c: .exit CODE mid-sequence stops the batch immediately with that code (spec §5)"
+
+# --- batch execution (stdin script): a mid-script error aborts
+# immediately with exit code 1 -- unlike Phase 3, where non-interactive
+# stdin behaved like a permissive REPL and kept going (spec §5) ---
+set +e
+out="$(printf 'CREATE TABLE t(a);\nSELECT * FROM missing;\nSELECT 1;\n' | "$BIN" 2>&1)"
+code=$?
+set -e
+[ "$code" -eq 1 ] || fail "batch (stdin script): an error should abort with exit code 1, got $code (output: $out)"
+if echo "$out" | grep -qx '1'; then fail "batch (stdin script): should not run SELECT 1 after the aborting error (got: $out)"; fi
+pass "batch (stdin script): a mid-script error aborts immediately with exit code 1 (spec §5)"
+
+# --- batch execution (stdin script): a final statement missing its ';'
+# still runs, implicitly terminated at EOF (spec §5) ---
+out="$(printf 'SELECT 123' | "$BIN" 2>&1)"
+echo "$out" | grep -qx '123' || fail "batch (stdin script): a trailing statement with no ';' should still run at EOF (got: $out)"
+pass "batch (stdin script): a final statement missing its ';' still runs at EOF (spec §5)"
+
+# --- CLI: mode/option exclusivity are usage errors (exit 2, spec §12) ---
+set +e
+"$BIN" --serve-stdio -c "SELECT 1" >/dev/null 2>&1
+code=$?
+set -e
+[ "$code" -eq 2 ] || fail "--serve-stdio and -c together should be a usage error (exit 2), got $code"
+
+set +e
+"$BIN" -r -i 5m >/dev/null 2>&1
+code=$?
+set -e
+[ "$code" -eq 2 ] || fail "--read-only and --snapshot-interval together should be a usage error (exit 2), got $code"
+pass "CLI: --serve-stdio+-c and --read-only+-i are usage errors (exit 2, spec §12)"
+
+# --- --read-only (-r): write SQL and every save operation are rejected;
+# .help omits them (spec §2). Driven through -c so no PTY is needed --
+# --read-only's behavior does not depend on interactivity. ---
+cp "$BIN" "$WORK/ro$EXE"
+chmod +x "$WORK/ro$EXE"
+
+out="$("$WORK/ro$EXE" -r -c "SELECT 1" 2>&1)"
+echo "$out" | grep -qx '1' || fail "--read-only: a plain SELECT should still work (got: $out)"
+
+set +e
+out="$("$WORK/ro$EXE" -r -c "CREATE TABLE t(a)" 2>&1)"
+code=$?
+set -e
+[ "$code" -eq 1 ] || fail "--read-only: a write statement should fail (exit 1), got $code (output: $out)"
+echo "$out" | grep -qiE 'read-?only' || fail "--read-only: write rejection message not found (got: $out)"
+
+set +e
+out="$(cd "$WORK" && "./ro$EXE" -r -c ".snapshot ro-should-not-exist$EXE" 2>&1)"
+code=$?
+set -e
+[ "$code" -eq 1 ] || fail "--read-only: .snapshot should be rejected (exit 1), got $code (output: $out)"
+[ ! -e "$WORK/ro-should-not-exist$EXE" ] || fail "--read-only: .snapshot should not have created a file"
+
+out="$("$WORK/ro$EXE" -r -c ".help" 2>&1)"
+if echo "$out" | grep -q '\.snapshot'; then fail "--read-only: .help should not list .snapshot (got: $out)"; fi
+pass "--read-only: write SQL and save operations are rejected, .help omits them (spec §2)"
+
+# --- stdio protocol (--serve-stdio): hello line, exec/query/snapshot/
+# close round trip (spec §7). Run with CWD set to $WORK so every filename
+# in the piped JSON can stay a bare relative name -- an absolute
+# $WORK-derived path embedded in piped *text* (as opposed to passed via
+# argv/exec) hits the same MSYS/Git-Bash auto-translation gap documented
+# above for ".snapshot <path>" (native_path's own doc comment); staying
+# relative sidesteps it entirely, the same trick this file already uses
+# for .snapshot's own concurrent-write test. Every `read` is bounded with
+# `-t` so a protocol bug here (a response never sent, e.g.) fails loudly
+# instead of hanging the suite (.claude/rules/testing.md: stdio checks
+# must always be able to detect a hang, not just success).
+cp "$BIN" "$WORK/stdio1$EXE"
+chmod +x "$WORK/stdio1$EXE"
+coproc DB { cd "$WORK" && exec "./stdio1$EXE" --serve-stdio; }
+
+read -r -t 10 hello <&"${DB[0]}" || fail "stdio: timed out waiting for the hello line"
+echo "$hello" | grep -q '"protocol":1' || fail "stdio: hello line missing protocol (got: $hello)"
+
+echo '{"op":"exec","sql":"CREATE TABLE t(a INTEGER)"}' >&"${DB[1]}"
+read -r -t 10 line <&"${DB[0]}" || fail "stdio: timed out waiting for exec CREATE's response"
+echo "$line" | grep -q '"ok":true' || fail "stdio: exec CREATE failed (got: $line)"
+
+echo '{"op":"exec","sql":"INSERT INTO t VALUES (?)","params":[7]}' >&"${DB[1]}"
+read -r -t 10 line <&"${DB[0]}" || fail "stdio: timed out waiting for exec INSERT's response"
+echo "$line" | grep -q '"rows_affected":1' || fail "stdio: exec INSERT did not report 1 row (got: $line)"
+
+echo '{"op":"query","sql":"SELECT * FROM t"}' >&"${DB[1]}"
+read -r -t 10 line <&"${DB[0]}" || fail "stdio: timed out waiting for query's response"
+echo "$line" | grep -qx '{"columns":\["a"\],"ok":true,"rows":\[\[7\]\]}' || fail "stdio: query result mismatch (got: $line)"
+
+echo "{\"op\":\"snapshot\",\"filename\":\"stdio-snap$EXE\"}" >&"${DB[1]}"
+read -r -t 10 line <&"${DB[0]}" || fail "stdio: timed out waiting for snapshot's response"
+echo "$line" | grep -q '"ok":true' || fail "stdio: snapshot failed (got: $line)"
+
+echo '{"op":"close"}' >&"${DB[1]}"
+read -r -t 10 line <&"${DB[0]}" || fail "stdio: timed out waiting for close's response"
+echo "$line" | grep -qx '{"ok":true}' || fail "stdio: close response mismatch (got: $line)"
+# No explicit "exec {DB[1]}>&-; wait" here: the server process has
+# already exited on its own in response to "close" (spec §4/§7), and
+# bash notices and clears DB[]/DB_PID as soon as it does -- by this
+# point "${DB[1]}" no longer refers to anything, and closing/waiting on
+# it would itself error ("ambiguous redirect"), confirmed by testing
+# this exact sequence in isolation.
+
+[ -f "$WORK/stdio-snap$EXE" ] || fail "stdio: snapshot op did not create stdio-snap$EXE"
+chmod +x "$WORK/stdio-snap$EXE"
+out="$(printf 'SELECT * FROM t;\n.exit\n' | "$WORK/stdio-snap$EXE" 2>&1)"
+echo "$out" | grep -qx '7' || fail "stdio: snapshot file missing seeded row (got: $out)"
+pass "stdio protocol: hello line, exec/query/snapshot/close round trip via coproc"
+
+# --- stdio protocol: an unrecognized op returns unsupported_op, and a
+# malformed JSON line returns bad_request without closing the connection
+# (spec §7) ---
+cp "$BIN" "$WORK/stdio2$EXE"
+chmod +x "$WORK/stdio2$EXE"
+coproc DB2 { exec "$WORK/stdio2$EXE" --serve-stdio; }
+
+read -r -t 10 _ <&"${DB2[0]}" || fail "stdio: timed out waiting for the hello line (2nd session)"
+
+echo 'not json at all' >&"${DB2[1]}"
+read -r -t 10 line <&"${DB2[0]}" || fail "stdio: timed out waiting for bad_request response"
+echo "$line" | grep -q '"code":"bad_request"' || fail "stdio: malformed JSON did not produce bad_request (got: $line)"
+
+echo '{"op":"frobnicate"}' >&"${DB2[1]}"
+read -r -t 10 line <&"${DB2[0]}" || fail "stdio: timed out waiting for unsupported_op response"
+echo "$line" | grep -q '"code":"unsupported_op"' || fail "stdio: unknown op did not produce unsupported_op (got: $line)"
+
+echo '{"op":"query","sql":"SELECT 1"}' >&"${DB2[1]}"
+read -r -t 10 line <&"${DB2[0]}" || fail "stdio: connection did not survive the earlier bad request (timed out)"
+echo "$line" | grep -q '"ok":true' || fail "stdio: connection should still work after bad_request/unsupported_op (got: $line)"
+
+echo '{"op":"close"}' >&"${DB2[1]}"
+read -r -t 10 _ <&"${DB2[0]}" || fail "stdio: timed out waiting for close's response (2nd session)"
+# See the first coproc block's comment above: no fd-close/wait needed
+# once the server has already exited on its own after "close".
+pass "stdio protocol: bad_request/unsupported_op don't close the connection (spec §7)"
+
+# --- stdio protocol + --read-only: snapshot/exec are rejected without
+# touching the filesystem or the live DB (spec §2, §7) ---
+cp "$BIN" "$WORK/stdioro$EXE"
+chmod +x "$WORK/stdioro$EXE"
+coproc DB3 { cd "$WORK" && exec "./stdioro$EXE" --serve-stdio -r; }
+
+read -r -t 10 _ <&"${DB3[0]}" || fail "stdio+read-only: timed out waiting for the hello line"
+
+echo '{"op":"exec","sql":"CREATE TABLE t(a)"}' >&"${DB3[1]}"
+read -r -t 10 line <&"${DB3[0]}" || fail "stdio+read-only: timed out waiting for exec's response"
+echo "$line" | grep -q '"ok":false' || fail "stdio+read-only: a write exec should be rejected (got: $line)"
+
+echo "{\"op\":\"snapshot\",\"filename\":\"stdioro-should-not-exist$EXE\"}" >&"${DB3[1]}"
+read -r -t 10 line <&"${DB3[0]}" || fail "stdio+read-only: timed out waiting for snapshot's response"
+echo "$line" | grep -q '"code":"read_only"' || fail "stdio+read-only: snapshot should return read_only (got: $line)"
+[ ! -e "$WORK/stdioro-should-not-exist$EXE" ] || fail "stdio+read-only: snapshot should not have created a file"
+
+echo '{"op":"close"}' >&"${DB3[1]}"
+read -r -t 10 _ <&"${DB3[0]}" || fail "stdio+read-only: timed out waiting for close's response"
+# See the first coproc block's comment above: no fd-close/wait needed
+# once the server has already exited on its own after "close".
+pass "stdio protocol + --read-only: snapshot/exec are rejected (spec §2, §7)"
 
 # --- go install produces a binary where the footer/.overwrite mechanism
 #     still works (.claude/rules/distribution.md) ---

@@ -86,38 +86,33 @@ func TestExecSQLPrintsRowsAndSuppressesNonSelect(t *testing.T) {
 	}
 }
 
+// TestSplitComplete exercises the package-level splitComplete function
+// directly -- it holds no per-run state (engine.Complete needs no live
+// DB), so no *repl/Session setup is needed here.
 func TestSplitComplete(t *testing.T) {
-	db, err := engine.Open(filepath.Join(t.TempDir(), "missing"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	var out, errw bytes.Buffer
-	r := newTestReplWithSession(t, db, &out, &errw, false)
-
 	t.Run("no semicolon is never complete", func(t *testing.T) {
-		stmts, remainder := r.splitComplete("SELECT 1")
+		stmts, remainder := splitComplete("SELECT 1")
 		if len(stmts) != 0 || remainder != "SELECT 1" {
 			t.Fatalf("splitComplete(%q) = %v, %q; want no statements, full remainder", "SELECT 1", stmts, remainder)
 		}
 	})
 
 	t.Run("one statement", func(t *testing.T) {
-		stmts, remainder := r.splitComplete("SELECT 1;\n")
+		stmts, remainder := splitComplete("SELECT 1;\n")
 		if len(stmts) != 1 || stmts[0] != "SELECT 1;" || strings.TrimSpace(remainder) != "" {
 			t.Fatalf("splitComplete = %v, %q", stmts, remainder)
 		}
 	})
 
 	t.Run("multiple statements on one line", func(t *testing.T) {
-		stmts, remainder := r.splitComplete("SELECT 1; SELECT 2;")
+		stmts, remainder := splitComplete("SELECT 1; SELECT 2;")
 		if len(stmts) != 2 || stmts[0] != "SELECT 1;" || stmts[1] != "SELECT 2;" || remainder != "" {
 			t.Fatalf("splitComplete = %v, %q", stmts, remainder)
 		}
 	})
 
 	t.Run("semicolon inside a string literal is not a boundary", func(t *testing.T) {
-		stmts, remainder := r.splitComplete("SELECT ';';")
+		stmts, remainder := splitComplete("SELECT ';';")
 		if len(stmts) != 1 || stmts[0] != "SELECT ';';" || remainder != "" {
 			t.Fatalf("splitComplete = %v, %q", stmts, remainder)
 		}
@@ -125,7 +120,7 @@ func TestSplitComplete(t *testing.T) {
 
 	t.Run("CREATE TRIGGER body is not split at its internal END", func(t *testing.T) {
 		text := "CREATE TABLE t(a); CREATE TRIGGER trg AFTER INSERT ON t BEGIN SELECT CASE WHEN 1 THEN 2 ELSE 3 END; END;"
-		stmts, remainder := r.splitComplete(text)
+		stmts, remainder := splitComplete(text)
 		if len(stmts) != 2 {
 			t.Fatalf("splitComplete found %d statements, want 2: %v (remainder %q)", len(stmts), stmts, remainder)
 		}

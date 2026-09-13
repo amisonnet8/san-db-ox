@@ -42,6 +42,47 @@ func jsonValue(v any) (any, error) {
 	}
 }
 
+// sqlValue is jsonValue's inverse: it converts one value already decoded
+// from a stdio request's "params" array (encoding/json's own dynamic
+// typing for a json.Unmarshal into `any` -- nil/bool/float64/string/
+// []any/map[string]any) into a value database/sql accepts as a bind
+// parameter, per spec §7's value table ("`params` でも同じ表現を受け
+// 付ける"). Only jsonValue's own output shapes are accepted back:
+//
+//   - null           -> nil                              (NULL)
+//   - a number (float64) -> passed through                (INTEGER or REAL, SQLite decides from the value)
+//   - a string       -> passed through                    (TEXT)
+//   - a 1-element array of a string -> base64-decoded []byte (BLOB)
+//
+// Anything else (an object, a bool, an array that isn't exactly one
+// string) is a protocol violation and reported as bad_request by the
+// caller (stdio.go), not silently coerced.
+func sqlValue(v any) (any, error) {
+	switch x := v.(type) {
+	case nil:
+		return nil, nil
+	case float64:
+		return x, nil
+	case string:
+		return x, nil
+	case []any:
+		if len(x) != 1 {
+			return nil, fmt.Errorf("BLOB must be a 1-element array, got %d elements", len(x))
+		}
+		s, ok := x[0].(string)
+		if !ok {
+			return nil, fmt.Errorf("BLOB array element must be a base64 string, got %T", x[0])
+		}
+		b, err := base64.StdEncoding.DecodeString(s)
+		if err != nil {
+			return nil, fmt.Errorf("invalid base64 BLOB: %w", err)
+		}
+		return b, nil
+	default:
+		return nil, fmt.Errorf("unexpected param value type %T", v)
+	}
+}
+
 // jsonReal renders f as a json.RawMessage guaranteed to contain "." or
 // "e"/"E" -- spec §7: "REALは必ず小数点を付けて出力する（88ではなく
 // 88.0）"-- since JSON's number syntax draws no distinction between

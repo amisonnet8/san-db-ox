@@ -56,11 +56,16 @@ san-db-ox --serve-stdio
 | `inspect` | ─ | 下記参照 |
 | `tables` | ─ | テーブル名の配列 |
 | `schema` | `table`(省略可) | CREATE文 |
+| `dump` | `pattern`(省略可) | `sql`（ダンプ全文） |
 | `overwrite` | ─ | **応答を1行返してからプロセスが終了する** |
 | `close` | ─ | 応答後にプロセスが正常終了する |
 
 `BEGIN` / `COMMIT` / `ROLLBACK` に専用の op はない。`exec` でそのまま送る。
 DDL も `exec` で実行できる。
+
+**`.import` に対応する op は無い。** サーバー側の任意パスのCSVファイルを読む
+操作であり、`inspect(path)` を op化しない理由と同じ懸念（外部公開時のファイル
+システム探索手段になる）のため、意図的に非対応。
 
 `query` は結果セットの全行を1つのレスポンスに含めて返す。**行を逐次取得する
 カーソル機構は持たない。**
@@ -129,9 +134,9 @@ INTEGER（64bit）の全範囲は表現できず、JavaScript のように言語
 
 | `code` | 意味 |
 | :--- | :--- |
-| `sqlite_error` | SQL実行エラー |
-| `bad_request` | 不正なJSON、未知のフィールド、不正な値の表現 |
-| `io_error` | ファイルの読み書き失敗 |
+| `sqlite_error` | `query`/`exec` のSQL実行エラー |
+| `bad_request` | 不正なJSON、未知のフィールド、不正な値の表現、必須パラメータ欠落 |
+| `io_error` | `snapshot`/`load`/`overwrite`/`dump` のファイルI/O・パス絡みの失敗 |
 | `unsupported_op` | 未知の op |
 | `read_only` | `--read-only` で拒否された操作 |
 

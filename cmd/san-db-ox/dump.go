@@ -1,18 +1,43 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"fmt"
+	"io"
 	"strings"
 )
 
-// cmdDump implements ".dump [PATTERN]" (spec §3): every matching table's
-// schema and data, plus the indexes/views/triggers that belong to those
-// tables, rendered as SQL text wrapped in a transaction -- piping the
-// output back into a fresh SanDBox instance reproduces the database.
-// PATTERN is a SQL LIKE pattern against table names (sqlite3's own
-// ".dump" argument works the same way; ".schema" instead takes an exact
-// name), defaulting to "%" (every table) when omitted.
+// cmdDump implements ".dump [PATTERN]" (spec §3): writes dumpSQL's output
+// straight to r.out. Kept separate from dumpSQL so the REPL/batch path
+// doesn't have to buffer the whole dump in memory just to print it --
+// unlike the stdio "dump" op (stdio.go), which needs the complete text as
+// one JSON string field and does buffer it via dumpSQL.
+func (r *repl) cmdDump(args []string) error {
+	pattern := "%"
+	if len(args) > 0 {
+		pattern = args[0]
+	}
+	return r.writeDump(r.out, pattern)
+}
+
+// dumpSQL renders the same output as cmdDump into a string, for the
+// stdio "dump" op (spec §7, naming.md) to embed in a JSON response.
+func (r *repl) dumpSQL(pattern string) (string, error) {
+	var buf bytes.Buffer
+	if err := r.writeDump(&buf, pattern); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+// writeDump is the shared implementation every matching table's schema
+// and data, plus the indexes/views/triggers that belong to those tables,
+// rendered as SQL text wrapped in a transaction -- piping the output
+// back into a fresh SanDBox instance reproduces the database. PATTERN is
+// a SQL LIKE pattern against table names (sqlite3's own ".dump" argument
+// works the same way; ".schema" instead takes an exact name), defaulting
+// to "%" (every table) when omitted.
 //
 // Literal values are rendered by SQLite's own quote() SQL function
 // (spec §3) rather than a hand-rolled Go encoder: quote() already
@@ -23,33 +48,28 @@ import (
 // storage class is still known -- by the time a value reaches Go via
 // Scan, TEXT and a BLOB's would-be string form are both just Go strings,
 // too late to reliably tell apart.
-func (r *repl) cmdDump(args []string) error {
-	pattern := "%"
-	if len(args) > 0 {
-		pattern = args[0]
-	}
+func (r *repl) writeDump(w io.Writer, pattern string) error {
+	fmt.Fprintln(w, "PRAGMA foreign_keys=OFF;")
+	fmt.Fprintln(w, "BEGIN TRANSACTION;")
 
-	fmt.Fprintln(r.out, "PRAGMA foreign_keys=OFF;")
-	fmt.Fprintln(r.out, "BEGIN TRANSACTION;")
-
-	if err := r.dumpTables(pattern); err != nil {
+	if err := r.dumpTables(w, pattern); err != nil {
 		return err
 	}
-	if err := r.dumpSequence(); err != nil {
+	if err := r.dumpSequence(w); err != nil {
 		return err
 	}
-	if err := r.dumpOtherObjects(pattern); err != nil {
+	if err := r.dumpOtherObjects(w, pattern); err != nil {
 		return err
 	}
 
-	fmt.Fprintln(r.out, "COMMIT;")
+	fmt.Fprintln(w, "COMMIT;")
 	return nil
 }
 
 // dumpTables emits CREATE TABLE followed immediately by that table's own
 // data (matching sqlite3's per-table interleaving) for every table whose
 // name matches pattern, in sqlite_master's own (creation) order.
-func (r *repl) dumpTables(pattern string) error {
+func (r *repl) dumpTables(w io.Writer, pattern string) error {
 	rows, err := r.sess.Query(
 		`SELECT name, sql FROM sqlite_master
 		 WHERE type = 'table' AND name NOT LIKE 'sqlite\_%' ESCAPE '\' AND name LIKE ?`,
@@ -76,15 +96,15 @@ func (r *repl) dumpTables(pattern string) error {
 	rows.Close() // done with this Rows before issuing further queries on the same Session connection
 
 	for _, t := range tables {
-		fmt.Fprintln(r.out, t.sql+";")
-		if err := r.dumpTableData(t.name); err != nil {
+		fmt.Fprintln(w, t.sql+";")
+		if err := r.dumpTableData(w, t.name); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (r *repl) dumpTableData(name string) error {
+func (r *repl) dumpTableData(w io.Writer, name string) error {
 	cols, err := r.tableColumns(name)
 	if err != nil {
 		return err
@@ -115,7 +135,7 @@ func (r *repl) dumpTableData(name string) error {
 		if err := rows.Scan(ptrs...); err != nil {
 			return err
 		}
-		fmt.Fprintln(r.out, prefix+strings.Join(vals, ",")+");")
+		fmt.Fprintln(w, prefix+strings.Join(vals, ",")+");")
 	}
 	return rows.Err()
 }
@@ -148,7 +168,7 @@ func (r *repl) tableColumns(name string) ([]string, error) {
 // re-inserting them here, unconditionally, is wrong when the table
 // doesn't exist in this database (no AUTOINCREMENT column was ever used)
 // or has no rows -- both checked below before emitting anything.
-func (r *repl) dumpSequence() error {
+func (r *repl) dumpSequence(w io.Writer) error {
 	var exists int
 	if err := r.sess.QueryRow(
 		`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'`,
@@ -181,9 +201,9 @@ func (r *repl) dumpSequence() error {
 	if len(lines) == 0 {
 		return nil
 	}
-	fmt.Fprintln(r.out, "DELETE FROM sqlite_sequence;")
+	fmt.Fprintln(w, "DELETE FROM sqlite_sequence;")
 	for _, l := range lines {
-		fmt.Fprintln(r.out, l)
+		fmt.Fprintln(w, l)
 	}
 	return nil
 }
@@ -195,7 +215,7 @@ func (r *repl) dumpSequence() error {
 // triggers defined on it. sql IS NOT NULL excludes implicit
 // sqlite_autoindex_% entries (UNIQUE/PRIMARY KEY constraints), which
 // have no CREATE statement of their own to replay.
-func (r *repl) dumpOtherObjects(pattern string) error {
+func (r *repl) dumpOtherObjects(w io.Writer, pattern string) error {
 	rows, err := r.sess.Query(
 		`SELECT sql FROM sqlite_master
 		 WHERE sql IS NOT NULL AND type IN ('index', 'view', 'trigger')
@@ -212,7 +232,7 @@ func (r *repl) dumpOtherObjects(pattern string) error {
 		if err := rows.Scan(&sqlText); err != nil {
 			return err
 		}
-		fmt.Fprintln(r.out, sqlText+";")
+		fmt.Fprintln(w, sqlText+";")
 	}
 	return rows.Err()
 }

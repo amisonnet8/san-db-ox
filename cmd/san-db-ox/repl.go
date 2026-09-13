@@ -48,38 +48,70 @@ type repl struct {
 	errw io.Writer
 }
 
-// runREPL opens one engine.Session on db -- held for the REPL's entire
-// run, spec §2 -- and reads SQL statements and dot commands from in
-// until EOF (Ctrl+D), a command that requests exit (spec §3, §13), or a
-// successful ".overwrite".
+// openSession opens one dedicated engine.Session on db -- the single
+// connection every mode (REPL, batch execution, stdio) runs its SQL
+// through for the run's entire lifetime, spec §2 -- and, if opts
+// requests --read-only, immediately switches it into SQLite's
+// query_only mode (spec §2's implementation note) so every write SQL
+// statement subsequently run on it fails with a query_only error.
+// .snapshot/.overwrite/.load are not SQL statements, so query_only does
+// not reach them; doSnapshot/doLoad/cmdOverwrite (dotcmd.go) each check
+// opts.readOnly themselves.
 //
-// All SQL in this REPL runs through that single Session rather than
-// db.Query/db.Exec's one-shot pooled connections: database/sql's
-// ResetSession does not roll back a transaction left open on a returned
-// connection (.claude/rules/sqlite-quirks.md), so running BEGIN through
-// pooled one-shot calls would let COMMIT/ROLLBACK silently land on a
-// different connection than BEGIN did. .snapshot/.overwrite/.load go
-// through db directly instead: they replace or persist the whole live
-// database, not run a statement on a Session's transaction.
-func runREPL(db *engine.DB, self string, in io.Reader, out, errw io.Writer, interactive bool, opts *options) int {
-	sess, err := db.Session(context.Background())
+// All SQL runs through this one Session rather than db.Query/db.Exec's
+// one-shot pooled connections: database/sql's ResetSession does not roll
+// back a transaction left open on a returned connection
+// (.claude/rules/sqlite-quirks.md), so running BEGIN through pooled
+// one-shot calls would let COMMIT/ROLLBACK silently land on a different
+// connection than BEGIN did. .snapshot/.overwrite/.load go through db
+// directly instead: they replace or persist the whole live database, not
+// run a statement on a Session's transaction.
+func openSession(ctx context.Context, db *engine.DB, opts *options) (*engine.Session, error) {
+	sess, err := db.Session(ctx)
 	if err != nil {
-		fmt.Fprintln(errw, "Error:", err)
-		return 1
+		return nil, err
 	}
-	defer sess.Close()
+	if opts != nil && opts.readOnly {
+		if _, err := sess.Exec("PRAGMA query_only = ON"); err != nil {
+			sess.Close()
+			return nil, err
+		}
+	}
+	return sess, nil
+}
 
+// newRepl builds a *repl from an already-opened Session, filling in the
+// -m/-o/-t startup defaults (options.go) that every mode (REPL,
+// batch.go, stdio.go) shares. interactive/interrupts are the only fields
+// that vary by mode and so are left to the caller (a batch or stdio run
+// is never interactive and never installs interrupts, repl.go's own
+// zero-value default for both).
+func newRepl(db *engine.DB, sess *engine.Session, self string, opts *options, interactive bool, out, errw io.Writer) *repl {
 	mode := modeList
 	if opts != nil && opts.mode != "" {
 		mode = opts.mode
 	}
 	headers := mode == modeColumn // .mode column auto-enables .headers, matching cmdMode (dotcmd.go)
 
-	r := &repl{
+	return &repl{
 		db: db, sess: sess, self: self, opts: opts,
 		interactive: interactive, mode: mode, headers: headers,
 		out: out, errw: errw,
 	}
+}
+
+// runREPL opens this run's Session (openSession above) and reads SQL
+// statements and dot commands from in until EOF (Ctrl+D), a command that
+// requests exit (spec §3, §13), or a successful ".overwrite".
+func runREPL(db *engine.DB, self string, in io.Reader, out, errw io.Writer, interactive bool, opts *options) int {
+	sess, err := openSession(context.Background(), db, opts)
+	if err != nil {
+		fmt.Fprintln(errw, "Error:", err)
+		return 1
+	}
+	defer sess.Close()
+
+	r := newRepl(db, sess, self, opts, interactive, out, errw)
 	return r.run(in)
 }
 
@@ -142,7 +174,7 @@ func (r *repl) run(in io.Reader) int {
 		trimmed := strings.TrimSpace(line)
 
 		if buf.Len() == 0 && strings.HasPrefix(trimmed, ".") {
-			exit, code := r.handleDotCommand(trimmed)
+			exit, code, _ := r.handleDotCommand(trimmed) // REPL shows the error (handleDotCommand already did) and keeps going; only batch.go acts on it
 			if exit {
 				return code
 			}
@@ -157,9 +189,9 @@ func (r *repl) run(in io.Reader) int {
 		buf.WriteString(line)
 		buf.WriteString("\n")
 
-		stmts, remainder := r.splitComplete(buf.String())
+		stmts, remainder := splitComplete(buf.String())
 		for _, stmt := range stmts {
-			r.execSQL(stmt)
+			r.execSQL(stmt) // error already printed to r.errw; REPL just moves on to the next statement
 		}
 		if strings.TrimSpace(remainder) == "" {
 			buf.Reset()
@@ -202,7 +234,11 @@ func (r *repl) printPrompt(continuing bool) {
 // Whatever text is left after the last recognized boundary -- the whole
 // input, if none was found -- is returned as remainder for the caller to
 // re-submit, with more input appended, on a later call.
-func (r *repl) splitComplete(text string) (stmts []string, remainder string) {
+//
+// A package-level function rather than a *repl method: it holds no
+// per-run state (engine.Complete needs no live DB), so both the REPL
+// loop (above) and batch execution (batch.go) call it the same way.
+func splitComplete(text string) (stmts []string, remainder string) {
 	start := 0
 	for i := 0; i < len(text); i++ {
 		if text[i] != ';' {
@@ -230,7 +266,12 @@ func (r *repl) splitComplete(text string) (stmts []string, remainder string) {
 // running cancels it instead of terminating the process (interrupt.go).
 // engine's TestSessionSurvivesCanceledQuery already established that a
 // Session stays usable after a canceled query.
-func (r *repl) execSQL(stmt string) {
+//
+// The error is returned in addition to being printed to r.errw here, for
+// the same reason handleDotCommand's is (dotcmd.go): the REPL loop
+// (run(), above) ignores it and keeps going, while batch.go's runBatch
+// uses it to abort immediately (spec §5).
+func (r *repl) execSQL(stmt string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if r.interrupts != nil {
@@ -240,17 +281,18 @@ func (r *repl) execSQL(stmt string) {
 	rows, err := r.sess.QueryContext(ctx, stmt)
 	if err != nil {
 		fmt.Fprintln(r.errw, "Error:", err)
-		return
+		return err
 	}
 	defer rows.Close()
 
 	cols, err := rows.Columns()
 	if err != nil {
 		fmt.Fprintln(r.errw, "Error:", err)
-		return
+		return err
 	}
 	if len(cols) == 0 {
-		return
+		return nil
 	}
 	r.printRows(rows, cols)
+	return nil
 }

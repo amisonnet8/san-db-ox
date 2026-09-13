@@ -2,11 +2,8 @@
 // console (REPL) backed by the engine package, with the data area
 // embedded in this very executable (docs/spec/san-db-ox_spec_ja.md §1).
 //
-// Phase 3 adds the REPL's full command set, output modes, and the
-// startup options that configure them (-m/-o/-t/-q/-i). -c/--command,
-// --serve-stdio, and -r/--read-only stay out of scope for this build
-// (Phase ④'s batch execution and stdio protocol); parseOptions
-// (options.go) reports them as ordinary unrecognized flags.
+// Phase 4 adds batch execution (-c/stdin), the stdio protocol
+// (--serve-stdio), and --read-only on top of Phase 3's REPL.
 package main
 
 import (
@@ -59,15 +56,47 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	defer db.Close()
 
-	interactive := isInteractive(stdin)
-	if interactive && !opts.quiet {
-		printBanner(stdout, db, self)
+	// Mode selection (spec §2, §12): --serve-stdio and -c are mutually
+	// exclusive (parseOptions already rejected combining them), and both
+	// take priority over stdin's own interactiveness. Absent either, a
+	// non-interactive stdin (piped/redirected) is read as a batch script
+	// (spec §5); only a live terminal starts the REPL. --snapshot-interval
+	// is REPL/stdio-only (spec §5, §12): batch mode warns and ignores it
+	// rather than starting the background goroutine at all.
+	switch {
+	case opts.serveStdio:
+		if opts.snapshotInterval > 0 {
+			stop := startSnapshotInterval(db, self, opts, stderr)
+			defer stop()
+		}
+		return runStdio(db, self, opts, stdin, stdout, stderr)
+
+	case len(opts.command) > 0:
+		warnIntervalIgnored(opts, stderr)
+		return runBatch(db, self, opts, opts.command, stdout, stderr)
+
+	case !isInteractive(stdin):
+		warnIntervalIgnored(opts, stderr)
+		return runBatchFromReader(db, self, opts, stdin, stdout, stderr)
+
+	default:
+		if !opts.quiet {
+			printBanner(stdout, db, self, opts.readOnly)
+		}
+		stop := startSnapshotInterval(db, self, opts, stderr)
+		defer stop()
+		return runREPL(db, self, stdin, stdout, stderr, true, opts)
 	}
+}
 
-	stopInterval := startSnapshotInterval(db, self, opts, stderr)
-	defer stopInterval()
-
-	return runREPL(db, self, stdin, stdout, stderr, interactive, opts)
+// warnIntervalIgnored implements spec §5's "指定された場合は警告を
+// stderrへ出して無視する": --snapshot-interval has no meaning for a
+// short-lived batch run, so batch.go never starts the background
+// goroutine at all -- this only tells the user why.
+func warnIntervalIgnored(opts *options, errw io.Writer) {
+	if opts.snapshotInterval > 0 {
+		fmt.Fprintln(errw, "Warning: --snapshot-interval has no effect in batch mode; ignoring it.")
+	}
 }
 
 // isInteractive reports whether in looks like a terminal (spec §13): a
@@ -96,11 +125,14 @@ SanDBox: a portable, single-binary RDBMS with no setup required. Running
 with no options starts an interactive SQL console (REPL).
 
 Options:
-  -m, --mode MODE              Output format: list|column|csv|json|line (default list)
-  -o, --snapshot-as FILENAME   Default filename for .snapshot
-  -q, --quiet                  Suppress the startup banner
+  -c, --command SQL             Run this SQL/dot-command and exit (repeatable)
+  -m, --mode MODE               Output format: list|column|csv|json|line (default list)
+  -o, --snapshot-as FILENAME    Default filename for .snapshot
+  -q, --quiet                   Suppress the startup banner
   -t, --timestamp               Append a timestamp to saved filenames
-  -i, --snapshot-interval DUR  Periodically save a snapshot, e.g. 5m
+  -i, --snapshot-interval DUR   Periodically save a snapshot, e.g. 5m
+      --serve-stdio             Serve the stdio protocol (JSON Lines)
+  -r, --read-only               Reject all write operations
   -v, --version                 Show version and exit
   -h, --help                    Show this help and exit
 `)

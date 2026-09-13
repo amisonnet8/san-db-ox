@@ -4,21 +4,41 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 )
 
-// options holds the CLI startup options that configure REPL/batch
-// behavior after start (spec §12). -c/--command, --serve-stdio, and
-// -r/--read-only are Phase 4 scope: parseOptions treats them, like any
-// other unrecognized flag, as a usage error (exit code 2, spec §5).
+// options holds the CLI startup options that configure REPL/batch/stdio
+// behavior after start (spec §12).
 type options struct {
 	mode             outputMode
 	snapshotAs       string
 	quiet            bool
 	timestamp        bool
 	snapshotInterval time.Duration
+	command          stringSliceFlag // -c/--command, repeatable, run in order (spec §5)
+	serveStdio       bool            // --serve-stdio, no short form (naming.md)
+	readOnly         bool            // -r/--read-only (spec §2)
 	help             bool
 	version          bool
+}
+
+// stringSliceFlag implements flag.Value so -c/--command can be given more
+// than once, appending each value in the order given (spec §5:
+// "複数回指定でき、指定順に実行"). flag.StringVar only binds a single
+// value, so a plain string field cannot represent this.
+type stringSliceFlag []string
+
+func (s *stringSliceFlag) String() string {
+	if s == nil {
+		return ""
+	}
+	return strings.Join(*s, ",")
+}
+
+func (s *stringSliceFlag) Set(v string) error {
+	*s = append(*s, v)
+	return nil
 }
 
 // parseOptions parses args (os.Args[1:]) against the flags spec §12
@@ -54,6 +74,11 @@ func parseOptions(args []string, errw io.Writer) (*options, error) {
 	fs.BoolVar(&opts.timestamp, "timestamp", false, "append a timestamp to saved filenames")
 	fs.DurationVar(&opts.snapshotInterval, "i", 0, "periodic snapshot interval, e.g. 5m")
 	fs.DurationVar(&opts.snapshotInterval, "snapshot-interval", 0, "periodic snapshot interval, e.g. 5m")
+	fs.Var(&opts.command, "c", "run this SQL/dot-command and exit (repeatable)")
+	fs.Var(&opts.command, "command", "run this SQL/dot-command and exit (repeatable)")
+	fs.BoolVar(&opts.serveStdio, "serve-stdio", false, "serve the stdio protocol (spec §7)")
+	fs.BoolVar(&opts.readOnly, "r", false, "reject all write operations")
+	fs.BoolVar(&opts.readOnly, "read-only", false, "reject all write operations")
 	fs.BoolVar(&opts.help, "h", false, "show help and exit")
 	fs.BoolVar(&opts.help, "help", false, "show help and exit")
 	fs.BoolVar(&opts.version, "v", false, "show version and exit")
@@ -71,6 +96,16 @@ func parseOptions(args []string, errw io.Writer) (*options, error) {
 		return nil, fmt.Errorf("unknown mode %q (try list, column, csv, json, line)", modeStr)
 	}
 	opts.mode = mode
+
+	// Mode exclusivity and --read-only's incompatibility with periodic
+	// saving are usage errors (exit code 2), not runtime failures --
+	// spec §12's exclusivity table.
+	if opts.serveStdio && len(opts.command) > 0 {
+		return nil, fmt.Errorf("--serve-stdio and -c/--command cannot be used together")
+	}
+	if opts.readOnly && opts.snapshotInterval > 0 {
+		return nil, fmt.Errorf("--read-only and -i/--snapshot-interval cannot be used together")
+	}
 
 	return opts, nil
 }

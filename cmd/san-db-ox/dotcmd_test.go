@@ -350,7 +350,7 @@ func TestHandleDotCommandUnknown(t *testing.T) {
 	db := newTestDB(t)
 	var out, errw bytes.Buffer
 	r := newTestRepl(t, db, "self", &out, &errw)
-	exit, _ := r.handleDotCommand(".nope")
+	exit, _, _ := r.handleDotCommand(".nope")
 	if exit {
 		t.Fatalf("unknown command should not request exit")
 	}
@@ -363,14 +363,14 @@ func TestHandleDotCommandExit(t *testing.T) {
 	db := newTestDB(t)
 	var out, errw bytes.Buffer
 	r := newTestRepl(t, db, "self", &out, &errw)
-	exit, code := r.handleDotCommand(".exit 3")
+	exit, code, _ := r.handleDotCommand(".exit 3")
 	if !exit || code != 3 {
 		t.Fatalf("handleDotCommand(.exit 3) = %v, %v, want exit=true code=3", exit, code)
 	}
 
 	out.Reset()
 	errw.Reset()
-	exit, code = r.handleDotCommand(".quit")
+	exit, code, _ = r.handleDotCommand(".quit")
 	if !exit || code != 0 {
 		t.Fatalf("handleDotCommand(.quit) = %v, %v, want exit=true code=0", exit, code)
 	}
@@ -385,7 +385,7 @@ func TestHandleDotCommandOverwriteInGoTest(t *testing.T) {
 	db := newTestDB(t)
 	var out, errw bytes.Buffer
 	r := newTestRepl(t, db, "self", &out, &errw)
-	exit, _ := r.handleDotCommand(".overwrite")
+	exit, _, _ := r.handleDotCommand(".overwrite")
 	if exit {
 		t.Fatalf("expected .overwrite to fail (and not request exit) under go test")
 	}

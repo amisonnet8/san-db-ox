@@ -110,14 +110,124 @@ importしていないことをCIが検証している。
 6. **Step 6: Ctrl+Cの状態機械** — `interrupt.go`（ExecDB踏襲）。
 7. **Step 7: `tests/e2e.sh`拡張・ドキュメント更新・仕上げ。**
 
+## フェーズ④のステップ
+
+スコープは仕様書§5（バッチ実行）・§7（stdioプロトコル）・§2/§12
+（`--read-only`）。前身プロジェクトExecDBに`-c`・stdio・`--read-only`の
+対応実装が無いため、全て新規設計（`PLAN.md`本文とは別に立てた実装計画の
+要点のみここに記録する）。
+
+0. **Step 0: 仕様書の更新** — stdioのhello行・`dump` op・エラーコード
+   割り当て方針を仕様書§7へ追記。`-c`/stdinスクリプトの「各引数は独立した
+   実行単位、末尾の`;`省略時は引数の終わりで暗黙補完」というルールを
+   §5へ追記。`--read-only`の実装方針（`query_only`プラグマ＋個別チェック）
+   を§2へ追記。
+1. **Step 1: CLI起動オプション拡張** — `-c`/`--command`（`stringSliceFlag`
+   による複数回指定対応）、`--serve-stdio`、`-r`/`--read-only`、および
+   両者の排他関係（`--serve-stdio`+`-c`、`--read-only`+`-i`）を
+   `parseOptions`へ追加。
+2. **Step 2: ドットコマンド実装のロジック/出力分離** — `cmdSnapshot`→
+   `doSnapshot`、`cmdLoad`→`doLoad`、`cmdOverwrite`→`doOverwrite`、
+   `cmdTables`→`listTables`、`cmdSchema`→`schemaSQL`、`cmdDump`→
+   `dumpSQL`（`dump.go`の各関数を`io.Writer`引数化）。stdioのop実装が
+   REPLの`cmd*`と同じロジックを再利用できるようにする
+   （`directory-structure.md`の原則をバッチ・stdioへ拡張）。
+3. **Step 3: バッチ実行モード** — 新規`batch.go`。`handleDotCommand`/
+   `execSQL`の戻り値へ`error`を追加（REPLは無視して継続、バッチは中断に
+   使う）。`splitComplete`を`*repl`メソッドからパッケージ関数へ格上げ。
+   `main.go`のモード判定を`--serve-stdio`／`-c`／非対話stdin／REPLの
+   4分岐に再構成。
+4. **Step 4: stdioプロトコル** — 新規`stdio.go`。hello行、JSON Lines
+   の読み書き（1行ごとの`Flush`）、op一覧（`query`/`exec`/`snapshot`/
+   `load`/`inspect`/`tables`/`schema`/`dump`/`overwrite`/`close`）。
+   `value.go`に`sqlValue`（JSON→SQLite値の逆変換）を追加。
+5. **Step 5: `--read-only`** — `openSession`が`opts.readOnly`なら
+   `PRAGMA query_only = ON`を適用。新規`readonly.go`（`ErrReadOnly`、
+   `(*repl) readOnly()`）。`doSnapshot`/`doLoad`/`doOverwrite`の個別
+   チェック、バナー・`.help`の読み取り専用バリアント。
+6. **Step 6: 仕上げ** — `tests/e2e.sh`拡張（`-c`・stdin scriptのバッチ
+   中断、モード排他、stdio往復、`--read-only`）、ユニットテスト
+   （`batch_test.go`/`stdio_test.go`/`readonly_test.go`）、
+   `docs/usage/`の実測突き合わせ、`PLAN.md`更新。
+
 ## 現在地
 
-**フェーズ③（REPL開発）完了。** ドットコマンド全種
-（`.tables`/`.schema`/`.mode`/`.headers`/`.snapshot`/`.overwrite`/`.load`/
-`.dump`/`.import`/`.exit`/`.quit`/`.help`）、出力モード5種、CLI起動オプション
-（`-m`/`-o`/`-t`/`-q`/`-i`/`-v`/`-h`）、Ctrl+Cの状態機械をすべて実装し、
-`make check`・`make race`・`make test`ともにgreen。次はフェーズ④
-（バッチ実行・stdioプロトコル開発）に着手する。
+**フェーズ④（バッチ実行・stdioプロトコル開発）完了。** `-c`/stdin script
+によるバッチ実行（エラー時即中断、終了コード0/1/2、各実行単位ごとの
+暗黙`;`補完）、`--serve-stdio`（hello行、`query`/`exec`/`snapshot`/`load`/
+`inspect`/`tables`/`schema`/`dump`/`overwrite`/`close`の全op）、
+`--read-only`（`query_only`プラグマ＋保存系操作の個別拒否）をすべて実装し、
+`make check`・`make race`・`make test`ともにgreen。次はフェーズ⑤
+（ドキュメント・配布）に着手する。
+
+### フェーズ④の進捗
+
+- **Step 0（仕様書の更新）**: §7へhello行・`dump` op・エラーコード割り当て
+  方針（`sqlite_error`/`io_error`/`bad_request`/`unsupported_op`/
+  `read_only`の使い分け）を追記。§5へ「`-c`の各値・stdinスクリプト全体は
+  それぞれ独立した実行単位」というルール（末尾`;`省略時はその単位の終わりで
+  暗黙補完、複数`-c`を跨いだ文の継続はしない）を追記——最初は「入力全体の
+  終端でのみ補完」と書いたが、実装中に自プロジェクトの`docs/usage/
+  cli-options_ja.md`の複数`-c`サンプル（いずれも`;`を付けていない）と
+  矛盾することに気づき、各`-c`引数を独立単位とする方式へ訂正した。§2へ
+  `--read-only`の実装方針（`query_only`プラグマ＋`.snapshot`/`.overwrite`/
+  `.load`の個別チェック）を追記。
+- **Step 1（CLI起動オプション拡張）**: `options.go`に`stringSliceFlag`
+  （`flag.Value`実装、`-c`/`--command`の複数回指定に対応）、
+  `--serve-stdio`、`-r`/`--read-only`を追加。`--serve-stdio`+`-c`、
+  `--read-only`+`-i`の排他検証。`options`構造体がスライスフィールドを
+  持つようになったため、既存テストの構造体比較（`!=`）を
+  `reflect.DeepEqual`へ修正。
+- **Step 2（ドットコマンドのロジック/出力分離）**: `dotcmd.go`の
+  `cmdSnapshot`/`cmdLoad`/`cmdOverwrite`/`cmdTables`/`cmdSchema`を、
+  engine呼び出し部分（`doSnapshot`/`doLoad`/`doOverwrite`/`listTables`/
+  `schemaSQL`）とテキスト整形部分に分離。`dump.go`の`dumpTables`等を
+  `io.Writer`引数化し`dumpSQL`（文字列を返す版）を追加。REPL用の`cmd*`は
+  この上の薄いラッパーへ変更——`directory-structure.md`の「3つの実行
+  モードは同じドットコマンド実装を共有する」をバッチ・stdioへ拡張する
+  ための下地。
+- **Step 3（バッチ実行モード）**: 新規`batch.go`。`handleDotCommand`/
+  `execSQL`が`error`を返すようシグネチャ変更（REPLは無視して継続、
+  バッチは中断判定に使う）。`splitComplete`を`*repl`メソッドから
+  パッケージ関数へ格上げ。`main.go`のモード判定を
+  `--serve-stdio`／`-c`／非対話stdin／REPLの4分岐に再構成し、
+  `--snapshot-interval`はバッチでは起動せず警告のみ出すよう変更。
+  **実装中に発見した実バグ**: `runBatchChunk`で`splitComplete`が返す
+  空白のみの`remainder`（文末`;`直後の`\n`等）をそのまま`buf`へ
+  書き戻していたため、`buf.Len() == 0`判定が二度と成立せず、後続行の
+  ドットコマンドがSQL文として実行されて構文エラーになっていた
+  （`TestRunBatchChunkDotCommandAfterCompleteStatement`で回帰確認。
+  意図的に修正を戻して同じ壊れ方を再現済み）。
+- **Step 4（stdioプロトコル）**: 新規`stdio.go`。hello行、1行ごとの
+  `Flush`、`query`/`exec`/`snapshot`/`load`/`inspect`/`tables`/`schema`/
+  `dump`/`overwrite`/`close`の全op。`value.go`に`sqlValue`
+  （`jsonValue`の逆変換、JSONの値→SQLiteバインド引数）を追加。
+- **Step 5（`--read-only`）**: `repl.go`に`openSession`（`Session`生成＋
+  `opts.readOnly`なら`PRAGMA query_only = ON`適用、REPL/バッチ/stdio
+  共通）を追加。新規`readonly.go`（`ErrReadOnly`、`(*repl) readOnly()`）。
+  `doSnapshot`/`doLoad`/`doOverwrite`が`ErrReadOnly`を返すよう変更
+  （`.snapshot --sqlite`も`doSnapshot`経由のため自動的に含まれる）。
+  バナーへの`(read-only)`表示、`.help`の読み取り専用バリアント
+  （`cmdHelpReadOnly`）。
+- **Step 6（仕上げ）**: `tests/e2e.sh`に`-c`（単発／複数／エラー中断／
+  `.exit`早期終了）、stdinスクリプト（エラー中断／暗黙`;`補完）、
+  モード排他（`--serve-stdio`+`-c`、`--read-only`+`-i`）、`--read-only`
+  （書き込みSQL・`.snapshot`拒否、`.help`差し替え）、stdioプロトコル
+  （`coproc`によるhello行/exec/query/snapshot/close往復、不正リクエスト後の
+  継続、`--read-only`との組み合わせ）を追加。既存の2ブロック
+  （`.tables`等のエラーハンドリング確認・`--snapshot-interval`確認）は
+  フェーズ④の仕様変更（非対話stdinがバッチ実行になりエラー時即中断する
+  ようになったこと、`--snapshot-interval`がバッチで無効化されたこと）に
+  合わせて改修——**実装中に新たに踏んだ落とし穴**: `coproc`で相手
+  プロセスへ`close` opを送って先方を終了させた後に`exec {NAME[1]}>&-`/
+  `wait "$NAME_PID"`を呼ぶと、bashが子プロセスの終了を検知した時点で
+  `NAME`配列と`NAME_PID`を自動的にクリアしてしまうため
+  `ambiguous redirect`になる（`.claude/rules/testing.md`へ追記）。
+  ユニットテスト`batch_test.go`（新規）・`stdio_test.go`（新規、
+  `io.Pipe`+タイムアウト付き）・`readonly_test.go`（新規）を追加。
+  `docs/usage/cli-options_ja.md`・`stdio-protocol_ja.md`を実測と
+  突き合わせ（`-c`の暗黙`;`補完ルール・`dump` op・エラーコード表を反映、
+  既存のシェル例は実行して動作を再確認済み）。
 
 ### フェーズ③の進捗
 
@@ -317,11 +427,11 @@ MSYSの自動変換が効くかどうかが変わることを意識する。
 2. ~~REPLのプロンプト文字列。~~ **Step 4で解消。** `SanDBox> ` に確定
    （表示名をそのまま使用し、起動バナーの`SanDBox v0.1.0`と表記を揃える）。
    仕様書§0の表記スロット表に追記済み。
-3. **`.dump` と `.import` に stdio op を用意するか。** 仕様書§7のop一覧には
-   無いが、「ドットコマンドはstdioでは対応するopとして提供する」と書いた
-   手前、この2つだけが例外になる。意図的な非対応か、単なる漏れかを確定させる
-   （`.import` を op 化する場合、ファイルパスを受け取るため `--read-only` との
-   兼ね合いも決める）。
+3. ~~`.dump` と `.import` に stdio op を用意するか。~~ **フェーズ④Step 0/4で
+   解消。** `.dump`は`dump` opとして追加（仕様書§7）、`.import`は意図的に
+   非対応のまま（サーバー側の任意パスのCSVを読む操作であり、
+   `inspect(path)`を非公開にしている理由と同じ懸念——外部公開時に
+   サーバー側のファイルシステムを探る手段になるため）。
 4. ~~`go install` で入れたバイナリでフッター方式が機能するか。~~
    **Step 5で解消。** `tests/e2e.sh`（`make test`）で`GOBIN`指定の
    `go install`→`.overwrite`→再起動→`SELECT`のループを自動検証する形にし、
