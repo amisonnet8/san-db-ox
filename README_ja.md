@@ -1,4 +1,4 @@
-*[English](README.md)*
+<p align="left">🌐 <a href="README.md"><strong>English</strong></a></p>
 
 <div align="center">
 
