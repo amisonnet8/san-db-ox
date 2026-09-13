@@ -72,21 +72,26 @@ No embedded data. Starting with an empty in-memory database.
 Enter ".help" for usage hints.
 SanDBox> CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
 SanDBox> INSERT INTO users VALUES (1, 'alice');
+SanDBox> .overwrite
+Overwrite ok, exiting.
+$ ./san-db-ox
+SanDBox v0.1.0
+Loaded snapshot: san-db-ox
+Enter ".help" for usage hints.
 SanDBox> SELECT * FROM users;
 1|alice
-SanDBox> .snapshot mydb
-Wrote mydb
 SanDBox> .exit
 ```
 
-`mydb` は**それ自体が実行可能なファイル**になっている。配れば、受け取った人が
-実行するだけで同じデータを持つDBが立ち上がる。
+`.overwrite`で**自分自身**を書き換え、`san-db-ox`はそれ自体がデータ入りの
+実行可能なファイルになった。配れば、受け取った人が実行するだけで同じデータを
+持つDBが立ち上がる。
 
 <!-- verify -->
 ```console
-$ ./san-db-ox -c "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)" -c "INSERT INTO users VALUES (1, 'alice')" -c ".snapshot mydb"
-Wrote mydb
-$ chmod +x mydb && ./mydb -c "SELECT * FROM users"
+$ ./san-db-ox -c "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)" -c "INSERT INTO users VALUES (1, 'alice')" -c ".overwrite"
+Overwrite ok, exiting.
+$ ./san-db-ox -c "SELECT * FROM users"
 1|alice
 ```
 
