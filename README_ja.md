@@ -1,13 +1,49 @@
+<div align="center">
+
 # SanDBox
+
+**実行ファイル1つに閉じ込めた、使い捨てのSQLサンドボックス。**
+自由に試して、メモリ上のDBをそのまま実行可能なファイルへスナップショットし、共有する。
+インストール不要、サーバー不要、ネットワーク不要。
+
+[![CI](https://github.com/amisonnet8/san-db-ox/actions/workflows/test.yml/badge.svg)](https://github.com/amisonnet8/san-db-ox/actions/workflows/test.yml)
+[![Release](https://img.shields.io/github/v/release/amisonnet8/san-db-ox)](https://github.com/amisonnet8/san-db-ox/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/amisonnet8/san-db-ox)](LICENSE)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/amisonnet8/san-db-ox)](go.mod)
 
 *[English](README.md)*
 
-**環境構築不要のポータブルな単一バイナリRDBMS。** DBエンジンとデータ領域を
-1つの実行ファイルに保持し、ダウンロードした実行ファイルをそのまま動かすだけで
-使える。Go製、内部エンジンは [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite)。
-**ネットワーク待受は一切持たない**——他システムとの結合は、子プロセスとして
-起動して標準入出力でやり取りする stdio プロトコル、および素のSQLiteファイルの
-読み書きで行う。
+</div>
+
+DBエンジンとデータ領域を1つの実行ファイルに保持し、ダウンロードした実行ファイルを
+そのまま動かすだけで使えるポータブルなRDBMS。Go製、内部エンジンは
+[`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite)。**ネットワーク待受は
+一切持たない**——他システムとの結合は、子プロセスとして起動して標準入出力で
+やり取りする stdio プロトコル、および素のSQLiteファイルの読み書きで行う。
+
+## 目次
+
+- [特徴](#特徴)
+- [インストール](#インストール)
+- [30秒で試す](#30秒で試す)
+- [4つの動作モード](#4つの動作モード)
+- [ネットワーク越しに使う場合の注意](#ネットワーク越しに使う場合の注意)
+- [もっと詳しく](#もっと詳しく)
+- [ライセンス](#ライセンス)
+
+## 特徴
+
+- 🧳 **単一バイナリ完結** — エンジンとデータが1つの実行ファイルに同居。追加の
+  インストール・依存関係・環境構築が一切ない
+- 📸 **実行可能なスナップショット** — `.snapshot`で今のDBをそのまま「動く
+  ファイル」として書き出し、そのまま配布できる
+- 🔒 **ネットワーク待受ゼロ** — `net`パッケージを一切importしない設計。外部への
+  公開はトランスポートの外付け（`socat`等）に委ねる
+- 🔌 **stdio連携** — JSON Linesのプロトコルで標準入出力から他言語・他プロセスと
+  結合できる
+- 🗄️ **SQLiteファイルとの相互運用** — `.snapshot --sqlite`での書き出し、
+  `.load`での取り込みが可能
+- 🧪 **読み取り専用モード** — `--read-only`でデモ・閲覧用途を安全に公開できる
 
 ## インストール
 
@@ -86,3 +122,11 @@ TCP/UNIXソケット越しに使うことができる。その場合、以下の
 ## ライセンス
 
 [MIT](LICENSE)
+
+---
+
+<div align="center">
+
+[目次へ戻る](#目次) ・ [Issues](https://github.com/amisonnet8/san-db-ox/issues)
+
+</div>
