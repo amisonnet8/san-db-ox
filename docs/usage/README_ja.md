@@ -26,17 +26,25 @@ No embedded data. Starting with an empty in-memory database.
 Enter ".help" for usage hints.
 SanDBox> CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
 SanDBox> INSERT INTO users VALUES (1, 'alice');
-SanDBox> SELECT * FROM users;
-1|alice
-SanDBox> .snapshot mydb
-SanDBox> .exit
+SanDBox> .overwrite
+Overwrite ok, exiting.
 ```
 
-`mydb` は**それ自体が実行可能なファイル**になっている。配れば、受け取った人が
-実行するだけで同じデータを持つDBが立ち上がる。
+`.overwrite`で**自分自身**を書き換え、`san-db-ox`はそれ自体がデータ入りの
+実行可能なファイルになった。配れば、受け取った人が実行するだけで同じデータを
+持つDBが立ち上がる。
 
 ```sh
-./mydb
+./san-db-ox
+```
+
+```
+SanDBox v0.1.0
+Loaded snapshot: san-db-ox
+Enter ".help" for usage hints.
+SanDBox> SELECT * FROM users;
+1|alice
+SanDBox> .exit
 ```
 
 ## 4つの動作モード
