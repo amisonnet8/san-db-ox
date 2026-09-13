@@ -20,10 +20,13 @@ unit:
 	go test ./...
 
 # E2E/integration tests against a freshly built binary (tests/e2e.sh,
-# .claude/rules/testing.md). Depends on build so `make test` alone is
-# always enough.
+# tests/docs.sh, .claude/rules/testing.md). Depends on build so `make
+# test` alone is always enough. tests/docs.sh verifies docs/ examples
+# against the same binary (CLAUDE.md's documentation-writing rule); it
+# self-skips on Windows (see its own header).
 test: build
 	bash tests/e2e.sh
+	bash tests/docs.sh
 
 # Fast pre-commit / CI gate: format, vet, no net/net-http dependency,
 # compile, unit tests. Deliberately excludes e2e (test) and race (slow,

@@ -1,3 +1,5 @@
+*[English](repl-commands.md)*
+
 # REPLコマンド
 
 SQL文に加えて、`.` で始まる制御コマンド（ドットコマンド）を実行できる。
@@ -78,6 +80,31 @@ id,name
 **`line`** — 1列1行、行の間に空行
 
 ```
+  id = 1
+name = alice
+
+  id = 2
+name = bob
+```
+
+上記はいずれも`users`に`(1,'alice')`・`(2,'bob')`が入っている前提の対話
+transcriptだが、`-c`でも同じ出力が得られる（`csv`はCRLF終端のため、この
+ドキュメント上ではプレーンテキストとして正しく表示できず割愛する。
+実際の挙動は`tests/e2e.sh`が検証している）。
+
+<!-- verify -->
+```console
+$ ./san-db-ox -c "CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT)" -c "INSERT INTO users VALUES (1,'alice'),(2,'bob')" -c "SELECT id, name FROM users" -m list
+1|alice
+2|bob
+$ ./san-db-ox -c "CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT)" -c "INSERT INTO users VALUES (1,'alice'),(2,'bob')" -c "SELECT id, name FROM users" -m column
+id  name
+--  -----
+1   alice
+2   bob
+$ ./san-db-ox -c "CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT)" -c "INSERT INTO users VALUES (1,'alice'),(2,'bob')" -c "SELECT id, name FROM users" -m json
+{"columns":["id","name"],"rows":[[1,"alice"],[2,"bob"]]}
+$ ./san-db-ox -c "CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT)" -c "INSERT INTO users VALUES (1,'alice'),(2,'bob')" -c "SELECT id, name FROM users" -m line
   id = 1
 name = alice
 

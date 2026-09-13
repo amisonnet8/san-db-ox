@@ -19,6 +19,42 @@
 Windows/macOSでの確認はGitHub Actions 3OSマトリクス（`test.yml`）が
 `make test`（同じ`tests/e2e.sh`）をそのまま実行することで担保する。
 
+## `go install` 経由のバージョン表示（`-v`・起動バナー・stdio hello行）
+
+`go install github.com/amisonnet8/san-db-ox/cmd/san-db-ox@latest` は
+`-ldflags` を渡せないため、`main.version`（`-ldflags -X`用の変数）は常に
+既定値の`dev`のまま残る。そこで`runtime/debug`の`ReadBuildInfo()`が返す
+`Main.Version`を併用する（`cmd/san-db-ox/main.go`の`resolvedVersion`）。
+
+**フェーズ⑤の実装中に実測して分かったこと（想定と異なった点）:**
+`go install pkg@version`だけでなく、**gitリポジトリ内での素の`go build`も
+`Main.Version`に疑似バージョン（`vX.Y.Z-yyyymmddhhmmss-<commit>`形式）を
+埋め込む**——Go 1.18以降`-buildvcs`の既定値が`auto`であり、ビルドディレクトリが
+VCS管理下にあると自動的にVCS情報を埋め込むため。**`(devel)`になるのは
+`-buildvcs=false`指定時、またはVCS管理下に無いディレクトリでビルドした
+場合のみ**（実測: リポジトリの`git archive`で取り出した非gitディレクトリで
+ビルドすると`(devel)`になることを確認）。
+
+この結果、「コミット済みできれいな状態のローカルビルド」と「本物の
+`go install pkg@version`」は`Main.Version`だけでは区別できない（区別する
+必要も無い——どちらも「このコミットから作られた」という同じ情報)。
+区別が必要なのは**コミットされていない変更がある（dirtyな）ローカル
+ビルド**の場合で、この場合`Main.Version`に`+dirty`サフィックスが付く。
+`+dirty`のバージョンをそのまま表示すると、配布不可能な状態のビルドが
+あたかも実在するバージョンであるかのように見えてしまうため、
+`ReadBuildInfo()`が返す`Settings`から`vcs.modified`キー（`"true"`/
+`"false"`）を読み、`true`なら`dev`へフォールバックする
+（`cmd/san-db-ox/main.go`の`isDirtyBuild`。回帰テスト:
+`TestIsDirtyBuildReadsVCSModifiedSetting`）。
+
+**検証時の注意:** `git stash`でコミット前の変更を一時退避してから
+ビルドする、という素朴なテスト方法は**罠になる**——退避後に残る`main.go`が
+そもそも`resolvedVersion`実装より前のコミットの内容であれば、新しい実装の
+動作を検証しているつもりで古いコードをビルド・実行してしまう（本セッションで
+実際に踏んだ）。**新しいコードのまま「コミット済みできれいな状態」を再現
+したい場合は、リポジトリを丸ごと別ディレクトリへコピーし、そこで
+新規に`git init`＋`git add -A`＋`git commit`してからビルドする**こと。
+
 ## リポジトリへのバイナリコミットは行わない
 
 各OS/アーキテクチャ向けの空バイナリは、リポジトリに直接コミットせず、

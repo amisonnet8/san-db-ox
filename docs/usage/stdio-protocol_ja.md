@@ -1,3 +1,5 @@
+*[English](stdio-protocol.md)*
+
 # stdioプロトコル
 
 ```sh
@@ -38,7 +40,7 @@ san-db-ox --serve-stdio
 接続すると、最初にリクエストに対応しない1行が出力される。
 
 ```json
-{"protocol":1,"version":"0.1.0","product":"SanDBox"}
+{"protocol":1,"version":"v0.1.0","product":"SanDBox"}
 ```
 
 **クライアントは必ずこの1行を読み飛ばす（または解釈する）こと。**
@@ -169,6 +171,21 @@ san-db-ox --serve-stdio <<'EOF'
 {"op":"exec","sql":"INSERT INTO users VALUES (1, 'alice')"}
 {"op":"query","sql":"SELECT id, name FROM users"}
 EOF
+```
+
+（`san-db-ox`がPATH上に無ければ`./san-db-ox`と読み替える。実行例:）
+
+<!-- verify -->
+```console
+$ ./san-db-ox --serve-stdio <<'EOF'
+{"op":"exec","sql":"CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)"}
+{"op":"exec","sql":"INSERT INTO users VALUES (1, 'alice')"}
+{"op":"query","sql":"SELECT id, name FROM users"}
+EOF
+{"product":"SanDBox","protocol":1,"version":"v0.1.0"}
+{"last_insert_id":0,"ok":true,"rows_affected":0}
+{"last_insert_id":1,"ok":true,"rows_affected":1}
+{"columns":["id","name"],"ok":true,"rows":[[1,"alice"]]}
 ```
 
 双方向にやり取りする（bash のコプロセス）:

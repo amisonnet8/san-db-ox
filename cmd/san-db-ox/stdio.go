@@ -62,7 +62,7 @@ func runStdio(db *engine.DB, self string, opts *options, in io.Reader, out, errw
 	info, _ := engine.Inspect(self)
 
 	w := bufio.NewWriter(out)
-	writeLine(w, map[string]any{"protocol": 1, "version": version, "product": "SanDBox"})
+	writeLine(w, map[string]any{"protocol": 1, "version": resolvedVersion(), "product": "SanDBox"})
 
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)

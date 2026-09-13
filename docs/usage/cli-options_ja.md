@@ -1,3 +1,5 @@
+*[English](cli-options.md)*
+
 # 起動オプション
 
 ```
@@ -58,26 +60,46 @@ stdin を使えるようにするため）。
 
 ## 使用例
 
+対話（REPL）で使う場合は引数なしで起動する。`./san-db-ox`だけでよい。
+
+1文だけ実行してJSONで受け取る:
+
+<!-- verify -->
+```console
+$ ./san-db-ox -c "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)" -c "INSERT INTO users VALUES (1, 'alice')" -c "SELECT * FROM users" -m json
+{"columns":["id","name"],"rows":[[1,"alice"]]}
+```
+
+複数の文を順に実行する:
+
+<!-- verify -->
+```console
+$ ./san-db-ox -c "CREATE TABLE t (id INTEGER)" -c "INSERT INTO t VALUES (1)" -c ".snapshot seeded"
+Wrote seeded
+```
+
+スクリプトを流し込む:
+
+<!-- verify -->
+```console
+$ printf 'CREATE TABLE t (id INTEGER);\nINSERT INTO t VALUES (42);\nSELECT * FROM t;\n' > schema.sql
+$ ./san-db-ox < schema.sql
+42
+```
+
+CIでの利用（ログを捨て、終了コードで判定）:
+
+<!-- verify -->
+```console
+$ ./san-db-ox -c "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)" -c "INSERT INTO users VALUES (1, 'alice'), (2, 'bob')" -c "SELECT count(*) FROM users" -m json 2>/dev/null
+{"columns":["count(*)"],"rows":[[2]]}
+```
+
+読み取り専用で起動、または他プログラムから結合する場合は、それぞれ以下を
+指定する（どちらもプロセスが常駐し続けるため、単発の実行例としては示せない）。
+
 ```sh
-# 対話（REPL）
-./san-db-ox
-
-# 1文だけ実行してJSONで受け取る
-./san-db-ox -c "SELECT * FROM users" -m json
-
-# 複数の文を順に実行
-./san-db-ox -c "CREATE TABLE t (id INTEGER)" -c "INSERT INTO t VALUES (1)" -c ".snapshot seeded"
-
-# スクリプトを流し込む
-./san-db-ox < schema.sql
-
-# CIでの利用（ログを捨て、終了コードで判定）
-./san-db-ox -c "SELECT count(*) FROM users" -m json 2>/dev/null || exit 1
-
-# 読み取り専用で起動
 ./san-db-ox --read-only
-
-# 他プログラムから結合する
 ./san-db-ox --serve-stdio
 ```
 
@@ -142,6 +164,9 @@ REPLでは起動バナーに `(read-only)` が付き、`.help` の一覧から�
 ログファイルは生成しない。永続化したい場合はリダイレクトや Docker / systemd の
 既存基盤に委ねる。
 
-```sh
-./san-db-ox -c "SELECT 1" 2> san-db-ox.log
+<!-- verify -->
+```console
+$ ./san-db-ox -c "SELECT * FROM missing_table" 2> san-db-ox.log
+$ cat san-db-ox.log
+Error: SQL logic error: no such table: missing_table (1)
 ```

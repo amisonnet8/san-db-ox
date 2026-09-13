@@ -19,10 +19,10 @@ Windows/macOSや複数CPUアーキテクチャでの動作確認（GitHub Action
    `Complete`。
 3. **③REPL開発【完了】**: REPLコマンド体系を本格的に作り込む。ドットコマンド
    一式、出力モード5種、Ctrl+Cの状態機械。
-4. **④バッチ実行・stdioプロトコル開発**: `-c`/stdinによる非対話実行、終了
-   コード、JSON Lines プロトコル、op一式、`--read-only`。
-5. **⑤ドキュメント・配布**: `docs/examples/`・`docs/tour/`の作成、README、
-   `release.yml`、英語版ドキュメントの整備。
+4. **④バッチ実行・stdioプロトコル開発【完了】**: `-c`/stdinによる非対話実行、
+   終了コード、JSON Lines プロトコル、op一式、`--read-only`。
+5. **⑤ドキュメント・配布【完了】**: `docs/examples/`・`docs/tour/`の作成、
+   README、`release.yml`、英語版ドキュメントの整備。
 
 ## 前身プロジェクトから引き継いだ確定事項
 
@@ -150,15 +150,92 @@ importしていないことをCIが検証している。
    （`batch_test.go`/`stdio_test.go`/`readonly_test.go`）、
    `docs/usage/`の実測突き合わせ、`PLAN.md`更新。
 
+## フェーズ⑤のステップ
+
+スコープは`docs/examples/`・`docs/tour/`の新設、英語版ドキュメント一式、
+ルート`README.md`/`README_ja.md`、`.github/workflows/release.yml`。実装
+機能は無く（`cmd/san-db-ox`のバージョン解決まわりのみ小さな変更）、
+ドキュメント・配布が主題。
+
+0. **Step 0: 仕様書の更新** — `-v`/バナー/stdio hello行が返すバージョン
+   文字列の決定順序（リリースビルドの`-ldflags`→`go install`のビルド情報
+   →`dev`）を§12/§13へ追記。
+1. **Step 1: 配布経路の仕上げ** — `go install`経由で入れたバイナリでも
+   意味のあるバージョンが出るよう`resolvedVersion()`を追加
+   （`runtime/debug.ReadBuildInfo()`使用）。`.github/workflows/release.yml`
+   新設（`v*`タグpush→`make check`→6通りcrossビルド→`gh release create`）。
+2. **Step 2: ドキュメント検証ハーネス `tests/docs.sh`新設** — `<!-- verify -->`
+   マーカー付きコードブロックを実バイナリへ流し込んで検証。`make test`へ
+   組み込み。
+3. **Step 3: ルート`README.md`/`README_ja.md`** — インストール・30秒デモ・
+   4モード表・ネットワーク越し利用時の注意（仕様書§9-4の2点）・ドキュメント
+   索引。
+4. **Step 4: `docs/examples/`（日本語版）** — 仕様書§9の7ユースケースを
+   5ファイルに肉付け（CI/CD、実行可能スナップショット、stdio結合、
+   read-onlyデモ、SQLite相互運用）。
+5. **Step 5: `docs/tour/`（日本語版）** — 8章構成の入門ガイド（体験型）。
+6. **Step 6: 英語版一式** — `docs/spec/`・`docs/usage/`・`docs/examples/`・
+   `docs/tour/`すべてを英訳（ファイル名は`_ja`を落とした形）。コード・
+   コマンド・出力例は翻訳しない。
+7. **Step 7: 仕上げ** — `.claude/rules/`への新知見追記、`PLAN.md`更新、
+   `docs/usage/README_ja.md`の索引にtour/examplesを追加。
+
 ## 現在地
 
-**フェーズ④（バッチ実行・stdioプロトコル開発）完了。** `-c`/stdin script
-によるバッチ実行（エラー時即中断、終了コード0/1/2、各実行単位ごとの
-暗黙`;`補完）、`--serve-stdio`（hello行、`query`/`exec`/`snapshot`/`load`/
-`inspect`/`tables`/`schema`/`dump`/`overwrite`/`close`の全op）、
-`--read-only`（`query_only`プラグマ＋保存系操作の個別拒否）をすべて実装し、
-`make check`・`make race`・`make test`ともにgreen。次はフェーズ⑤
-（ドキュメント・配布）に着手する。
+**フェーズ⑤（ドキュメント・配布）完了。実装計画上の全5フェーズが完了。**
+`docs/examples/`（5本）・`docs/tour/`（8章）を新設し、`docs/spec/`・
+`docs/usage/`・`docs/examples/`・`docs/tour/`・ルート`README`の英語版一式を
+整備。ドキュメント中のコマンド・出力例は新設した`tests/docs.sh`
+（`<!-- verify -->`マーカー付きブロックを実バイナリへ流し込んで検証、
+`make test`から実行）で機械的に検証しており、40ファイルすべてgreen。
+`.github/workflows/release.yml`を新設（`v*`タグpush→6通りcrossビルド→
+`gh release create`）。`go install`経由で入れたバイナリでも意味のある
+バージョン文字列が出るよう`resolvedVersion()`を追加（`-ldflags`→
+`go install`のビルド情報→`dev`の優先順位、実測で`go build`がVCS疑似
+バージョンを埋め込む挙動を発見し対処）。`make check`・`make race`・
+`make test`ともにgreen。
+
+### フェーズ⑤の進捗
+
+- **Step 0（仕様書の更新）**: §12へバージョン文字列の決定順序
+  （`-ldflags`→`ReadBuildInfo().Main.Version`→`dev`）を追記。§13の
+  起動バナー節へ、バナーの表示するバージョンが`-v`・stdio hello行と
+  同じ解決結果であることを追記。
+- **Step 1（配布経路の仕上げ）**: `main.go`に`resolvedVersion()`/
+  `isDirtyBuild()`を追加。**実装中に想定と異なる挙動を発見**——
+  gitリポジトリ内での素の`go build`は`(devel)`ではなく、Go 1.18以降の
+  `-buildvcs=auto`既定によりVCS由来の疑似バージョン
+  （`vX.Y.Z-yyyymmddhhmmss-<commit>`、dirtyなら`+dirty`付き）を
+  `Main.Version`へ埋め込む。当初の想定（`go install`のみがこの値を持つ）
+  を修正し、「dirtyな場合のみ`dev`へフォールバックする」実装へ変更
+  （`vcs.modified`キーで判定）。`git stash`で退避してから検証しようと
+  したところ、退避後のコードが実装前のものになっていて誤った結果を
+  見てしまう罠を実際に踏み、`.claude/rules/distribution.md`へ記録した。
+  `.github/workflows/release.yml`新設。6通りのクロスビルドを手元で実行し
+  成功を確認、`actions/upload-artifact`・`actions/download-artifact`の
+  バージョンタグが実在することを`curl`で確認済み。
+- **Step 2（`tests/docs.sh`新設）**: `<!-- verify -->`マーカー・heredoc対応・
+  バージョン/タイムスタンプの正規化を実装。`Makefile`の`test`ターゲットへ
+  組み込み。既存の`docs/usage/`のシェル例にもマーカーを追加し実測差分
+  （`.mode json`の実際のキー順・`.load`/`.import`の確認メッセージ欠落等）
+  を複数発見・修正。
+- **Step 3（README）**: `README.md`/`README_ja.md`新設。仕様書§9-4が
+  「READMEでも必ず併記する」と定める2点（接続ごとに別DB・認証無し）を含む。
+- **Step 4（`docs/examples/`）**: 5ファイル新設。実測時に`.dump`の実際の
+  出力（`PRAGMA foreign_keys=OFF`/`BEGIN TRANSACTION`/`COMMIT`を含む）や
+  `-c`と非対話stdinの併用時に後者が無視されるだけで使用法エラーには
+  ならないこと等、ドキュメント執筆時の思い込みと実挙動の差分を複数発見。
+- **Step 5（`docs/tour/`）**: 8ファイル新設（索引＋7章）。
+- **Step 6（英語版）**: `docs/spec/san-db-ox_spec.md`（922行）を含む全19
+  ファイルを英訳。コード・コマンド・出力例は翻訳せず、検証マーカーも
+  日本語版と同じ位置に付与——翻訳時のコマンド打ち間違いが`make test`で
+  機械的に検出される。
+- **Step 7（仕上げ）**: `.claude/rules/testing.md`へ`tests/docs.sh`の運用
+  ノート（正規化を2つの関心事に限る理由、heredoc対応、実測で見つかった
+  罠）を追記。`.claude/rules/distribution.md`へ`go install`経由の
+  バージョン解決の実測結果を追記。`docs/usage/README_ja.md`の索引に
+  `docs/tour/`・`docs/examples/`へのリンクを追加。全ローカルリンクが
+  解決することをスクリプトで確認済み。
 
 ### フェーズ④の進捗
 
@@ -455,10 +532,13 @@ MSYSの自動変換が効くかどうかが変わることを意識する。
   `devcontainer.json` へ反映する）。session内で手動インストール・設定を
   行った場合は、忘れずにここへ追記すること。
   - （なし）
-- **`docs/examples/`・`docs/tour/` は未作成。** 実装完了後（フェーズ⑤）に
-  作成する。
-- **英語版ドキュメントは未作成。** 日本語版が固まってから、フェーズ⑤で
-  まとめて整える。
+- ~~`docs/examples/`・`docs/tour/` は未作成。~~ **フェーズ⑤で作成済み**
+  （それぞれ5ファイル・8ファイル）。
+- ~~英語版ドキュメントは未作成。~~ **フェーズ⑤で整備済み**（`docs/spec/`・
+  `docs/usage/`・`docs/examples/`・`docs/tour/`・ルート`README`すべて）。
+- ~~`release.yml` が未作成。~~ **フェーズ⑤で作成済み**
+  （`.github/workflows/release.yml`）。`v*`タグのpush自体はユーザーの
+  判断で行う（本プロジェクトの一貫した運用ルール）。
 - **`san-db-ox-clients`（各言語向けドライバ）は別リポジトリ。** 本リポジトリ
   では扱わない。本体側に残す接続テストはGoで書いたstdioクライアントのみ
   （`.claude/rules/testing.md`）。

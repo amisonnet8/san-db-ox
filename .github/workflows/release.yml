@@ -1,0 +1,93 @@
+name: release
+
+# .claude/rules/distribution.md: a `v*` tag push cross-compiles empty
+# (no embedded data) binaries for 6 OS/arch combinations and publishes
+# them as raw GitHub Releases assets (no archiving). The tag itself is
+# the source of truth for the version -- it is passed straight through
+# to -ldflags rather than derived from `git describe`.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  check:
+    # Safety net: `test.yml`'s CI normally covers every commit on main,
+    # but a tag could in principle be pushed at a commit that never went
+    # through it. Gate the build job on `make check` passing here too
+    # (.claude/rules/distribution.md's "ビルド前のゲート").
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: make check
+        run: make check
+        shell: bash
+
+  build:
+    needs: check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # CGO_ENABLED=0 pure-Go cross-compilation, one ubuntu-latest
+      # runner for all 6 combinations -- no per-OS runner or C compiler
+      # needed (.claude/rules/distribution.md).
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          name="san-db-ox_${{ github.ref_name }}_${GOOS}_${GOARCH}${ext}"
+          go build -ldflags "-X main.version=${{ github.ref_name }}" -o "$name" ./cmd/san-db-ox
+          sha256sum "$name" > "$name.sha256"
+          echo "ASSET_NAME=$name" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ASSET_NAME }}
+          path: |
+            ${{ env.ASSET_NAME }}
+            ${{ env.ASSET_NAME }}.sha256
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      # `gh` ships preinstalled on ubuntu-latest runners, so this avoids
+      # pinning a third-party release action by tag
+      # (.claude/rules/testing.md's "uses: owner/repo@TAG が実際のリリース
+      # タグ名と厳密に一致しないと Unable to resolve action で失敗する"
+      # class of problem). Published immediately, not as a draft
+      # (.claude/rules/distribution.md).
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" dist/* --title "${{ github.ref_name }}" --generate-notes

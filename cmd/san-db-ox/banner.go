@@ -16,9 +16,9 @@ import (
 // "inspect" op exposes via read_only (stdio.go).
 func printBanner(out io.Writer, db *engine.DB, self string, readOnly bool) {
 	if readOnly {
-		fmt.Fprintf(out, "SanDBox %s (read-only)\n", version)
+		fmt.Fprintf(out, "SanDBox %s (read-only)\n", resolvedVersion())
 	} else {
-		fmt.Fprintf(out, "SanDBox %s\n", version)
+		fmt.Fprintf(out, "SanDBox %s\n", resolvedVersion())
 	}
 	if db.HasData() {
 		fmt.Fprintf(out, "Loaded snapshot: %s\n", filepath.Base(self))

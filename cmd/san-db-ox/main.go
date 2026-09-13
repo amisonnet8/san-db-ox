@@ -10,13 +10,62 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 
 	"github.com/amisonnet8/san-db-ox/engine"
 )
 
 // version is set at build time via -ldflags -X main.version=<tag>
-// (.claude/rules/distribution.md); local builds stay "dev".
+// (.claude/rules/distribution.md); local builds stay "dev". This must
+// stay a plain string variable (not computed at init) for -ldflags -X to
+// be able to reach it -- it only works on a string variable initialized
+// with a constant (see `go help build`).
 var version = "dev"
+
+// resolvedVersion implements spec §12's version resolution order: a
+// release build's -ldflags value wins if set; otherwise, whatever
+// debug.ReadBuildInfo's Main.Version carries -- this covers both a
+// binary fetched via `go install <module>@<version>` (which cannot
+// receive -ldflags) and a local `go build` run inside a clean git
+// checkout, since Go's toolchain stamps Main.Version with a pseudo-version
+// derived from the commit in both cases (confirmed by hand: a plain `go
+// build` in this repo's own working tree already reports something like
+// "v0.0.0-20260913032324-<commit>", not "(devel)", because -buildvcs
+// defaults to "auto" and finds the surrounding git checkout). A *dirty*
+// checkout (uncommitted changes) gets the same treatment except for a
+// "+dirty" suffix, which isDirtyBuild below checks for via the
+// "vcs.modified" setting -- accepting that would let an unreproducible,
+// possibly half-edited local build masquerade as a real version, so it
+// is deliberately excluded and falls through to "dev" instead. The
+// banner (banner.go) and the stdio protocol's hello line (stdio.go) both
+// call this rather than reading the version variable directly, so all
+// three report the same value (spec §12, §13).
+func resolvedVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		// "(devel)" is what ReadBuildInfo reports when no version info
+		// is available at all (e.g. -buildvcs=false, or building
+		// outside any VCS checkout) -- not a real version.
+		if v := bi.Main.Version; v != "" && v != "(devel)" && !isDirtyBuild(bi) {
+			return v
+		}
+	}
+	return version
+}
+
+// isDirtyBuild reports whether bi was built from a VCS checkout with
+// uncommitted changes (the "vcs.modified" build setting Go's toolchain
+// records alongside a VCS-derived Main.Version).
+func isDirtyBuild(bi *debug.BuildInfo) bool {
+	for _, s := range bi.Settings {
+		if s.Key == "vcs.modified" {
+			return s.Value == "true"
+		}
+	}
+	return false
+}
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
@@ -39,7 +88,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if opts.version {
-		fmt.Fprintf(stdout, "SanDBox %s\n", version)
+		fmt.Fprintf(stdout, "SanDBox %s\n", resolvedVersion())
 		return 0
 	}
 
