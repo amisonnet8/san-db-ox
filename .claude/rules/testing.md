@@ -13,6 +13,17 @@
 | クロスプラットフォーム動作確認（Windows/macOS） | 開発初期からGitHub Actionsで自動テストを組み、都度確認する。特に`.overwrite`はWindows特有のOS制約（`ERROR_SHARING_VIOLATION`等）が設計に直結しているため、後回しにせず早期から継続的に検証する。 |
 | stdioプロトコル | Goで書いたクライアントで検証する（`tests/`配下）。他言語ドライバでの検証は別リポジトリ`san-db-ox-clients`が独自に行う（本体CIには含めない）。 |
 | 依存ライブラリの脆弱性・ライセンスチェック | GitHub Actions上で `trivy` を実行し、既知の脆弱性（CVE）とライセンス互換性（MIT/BSD/Apache-2.0等は許可、GPL系等は拒否）をチェックする。ソースコード自体のコピペ検出は対象外（人間レビューに委ねる）。 |
+| シェルスクリプトの静的解析 | `make shellcheck`（`git ls-files '*.sh'`で追跡中の`*.sh`を自動列挙し`shellcheck`にかける。新規スクリプトを追加してもMakefile側の変更は不要）。`check`には含めず、CIでは`ubuntu-latest`限定の専用ジョブとして独立させる——`windows-latest`に`shellcheck`がプリインストールされている保証が無く、かつスクリプトの中身はOSによって変わらないため、3OSマトリクスで重複実行する意味が無い。devcontainerの`postCreate.sh`でもインストールし、手元で`make shellcheck`が使えるようにしておく。 |
+
+**シェルスクリプト中のコメントを、行頭が小文字の `# shellcheck` で始まる文に
+してはいけない。** ShellCheck自身が`# shellcheck disable=...`のような
+インラインディレクティブとして解釈しようとし、`key=value`形式でない
+（コロン区切りの説明文等の）場合はパースエラー（SC1072/SC1073）で落ちる
+——ディレクティブ扱いされたコメント以降の行がパース不能になり、その
+スクリプト全体がチェックできなくなる（`.devcontainer/postCreate.sh`で
+`shellcheck`パッケージの導入理由を説明するコメントを書いた際に実際に踏んだ）。
+「ShellCheck」等、大文字を混ぜて書けばディレクティブとして認識されず
+通常のコメントとして扱われる。
 
 ## 実装後の動作確認について
 

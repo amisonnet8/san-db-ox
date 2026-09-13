@@ -106,8 +106,7 @@ code=$?
 set -e
 [ "$code" -eq 7 ] || fail ".exit 7 should exit with code 7, got $code"
 
-printf 'SELECT 1;\n' | "$BIN" >/dev/null 2>&1
-[ "$?" -eq 0 ] || fail "EOF with no .exit should exit 0"
+printf 'SELECT 1;\n' | "$BIN" >/dev/null 2>&1 || fail "EOF with no .exit should exit 0"
 pass "REPL: .exit CODE and EOF termination"
 
 # --- .snapshot: explicit name and CWD-relative default name (spec §4; the

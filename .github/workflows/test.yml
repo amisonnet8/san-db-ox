@@ -62,6 +62,18 @@ jobs:
         run: make race
         shell: bash
 
+  shellcheck:
+    # Lints every tracked *.sh (Makefile's `shellcheck` target). ubuntu-latest
+    # ships shellcheck preinstalled; script content doesn't vary by OS, so
+    # this doesn't need the 3-OS matrix that `check`/`test` use.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: make shellcheck
+        run: make shellcheck
+        shell: bash
+
   trivy:
     # .claude/rules/testing.md: known-vulnerability (CVE) and license
     # compatibility (MIT/BSD/Apache-2.0 allowed, GPL-family rejected)

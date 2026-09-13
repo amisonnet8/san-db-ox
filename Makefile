@@ -5,7 +5,7 @@
 # verbatim (see `go help build`).
 BIN := san-db-ox$(shell go env GOEXE)
 
-.PHONY: build unit test check fmt fmt-check vet netcheck race clean
+.PHONY: build unit test check fmt fmt-check vet netcheck shellcheck race clean
 
 # Builds $(BIN) to the repo root, and (via the same dependency graph)
 # verifies engine compiles too. `go build ./...` does NOT do this: for
@@ -61,6 +61,13 @@ netcheck:
 		echo "net/http must not appear even transitively" 1>&2; \
 		exit 1; \
 	fi
+
+# Lints every tracked shell script. Not part of `check`: shellcheck isn't
+# guaranteed present on windows-latest the way it is on ubuntu/macos-latest
+# (.claude/rules/testing.md), and script content doesn't vary by OS, so CI
+# runs this once on ubuntu-latest rather than across the 3-OS matrix.
+shellcheck:
+	shellcheck $(shell git ls-files '*.sh')
 
 # Requires a C compiler (CGO_ENABLED=1); not part of `check`. See
 # .claude/rules/testing.md "-race の運用方針".

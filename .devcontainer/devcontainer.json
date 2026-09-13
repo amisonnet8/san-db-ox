@@ -6,7 +6,8 @@
       "extensions": [
         "golang.Go",
         "ms-vscode.makefile-tools",
-        "github.vscode-github-actions"
+        "github.vscode-github-actions",
+        "timonwong.shellcheck"
       ],
       "settings": {
         "go.useLanguageServer": true,
