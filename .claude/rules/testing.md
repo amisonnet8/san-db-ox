@@ -341,6 +341,30 @@ SIGINTハンドラを普通に使い続けられる。OS分岐が必要なのは
 呼び出し構文だけにし、終了コードの記録方法（trapしたラッパースクリプト
 経由）はOSを問わず共通化するのが安全（`tests/e2e.sh`のCtrl+Cブロック参照）。
 
+## macOSの標準環境には`timeout`コマンドが無い
+
+GNU coreutilsの`timeout`はLinuxディストリビューションには標準で入っているが、
+**macOSのベースシステムには存在しない。** Homebrewの`coreutils`パッケージ
+経由で入る場合も、既存の`timeout`（が無い）と衝突しないよう`gtimeout`という
+別名でインストールされる。`macos-latest`のGitHub Actionsランナーに`coreutils`
+がプリインストールされているとは限らないため、**`gtimeout`の存在も保証
+されない。**
+
+`tests/e2e.sh`のCtrl+C検証で`timeout 10 script ...`を無条件に呼んだところ、
+macOS CIで`Error 127`（command not found）を起こした。**`command -v`で
+`timeout`→`gtimeout`の順に存在確認し、両方無ければタイムアウト無しで実行に
+フォールバックするヘルパー関数（`run_with_timeout`）を経由すること。**
+タイムアウト無しで実行することが安全な理由: CIジョブ自体に上位のタイムアウトが
+必ず設定されているため、ここでのタイムアウト消失は「検出が少し遅れる」程度で
+CIを止め切れなくなるわけではない（テスト自体を無限に止める`fail()`ではなく、
+あくまで安全網）。
+
+**変数展開での分岐は罠になる。** `TIMEOUT_BIN=""; $TIMEOUT_BIN 10 cmd`のように
+空文字列になりうる変数をコマンド名の位置に置くと、単語分割で消えて
+`10 cmd`という別のコマンドラインに化ける（`10: command not found`）。
+`if`で存在確認してから呼び出し全体を出し分ける関数にする方が確実
+（`tests/e2e.sh`の`run_with_timeout`参照）。
+
 ## `-race` の運用方針
 
 `engine`が`Session`（専有コネクション）を複数の独立したクライアントに配る

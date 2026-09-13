@@ -326,6 +326,25 @@ pass "--snapshot-interval: periodic background saves work in REPL mode"
 # wrapper shell (interrupt$EXE still gets and handles the signal itself,
 # untouched by its parent's trap) is what lets it survive to write the
 # status after interrupt$EXE actually exits. ---
+# run_with_timeout runs its args under `timeout`/`gtimeout` (10s) if
+# either is on PATH, or bare if neither is -- macOS's base install has
+# no `timeout` at all (GNU coreutils only; some macOS runners carry it
+# as `gtimeout` via Homebrew, but that isn't guaranteed), and running
+# "" 10 script ... after a naive empty-variable expansion would fail
+# with "10: command not found" rather than actually skipping it. Losing
+# the timeout there is an acceptable fallback (the CI job's own overall
+# timeout is still a backstop); what breaks the build is treating
+# "timeout" as though it always exists.
+run_with_timeout() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 10 "$@"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout 10 "$@"
+  else
+    "$@"
+  fi
+}
+
 if command -v script >/dev/null 2>&1; then
   cp "$BIN" "$WORK/interrupt$EXE"
   chmod +x "$WORK/interrupt$EXE"
@@ -361,9 +380,9 @@ if command -v script >/dev/null 2>&1; then
   } | {
     set +e
     if [ "$(uname -s)" = "Darwin" ]; then
-      timeout 10 script -q "$RAW" "$RUNNER" >/dev/null 2>&1
+      run_with_timeout script -q "$RAW" "$RUNNER" >/dev/null 2>&1
     else
-      timeout 10 script -qc "$RUNNER" "$RAW" >/dev/null 2>&1
+      run_with_timeout script -qc "$RUNNER" "$RAW" >/dev/null 2>&1
     fi
   }
   # san-db-ox's own exit code (1 is expected: the two consecutive idle
