@@ -195,6 +195,13 @@ importしていないことをCIが検証している。
 バージョンを埋め込む挙動を発見し対処）。`make check`・`make race`・
 `make test`ともにgreen。
 
+**`v0.1.0`タグをpush→`release.yml`の実地確認も完了。** [GitHub Releases
+v0.1.0](https://github.com/amisonnet8/san-db-ox/releases/tag/v0.1.0)に
+6アセット（`linux`/`darwin`/`windows` × `amd64`/`arm64`、各`.sha256`付き）が
+ドラフトでなく即時公開された状態を`curl`で実測確認済み（アセットサイズは
+約10〜11MB、`binary-size.md`の想定レンジ通り）。README各所の
+`/releases/latest`リンクもこれで実体を持つ。
+
 ### フェーズ⑤の進捗
 
 - **Step 0（仕様書の更新）**: §12へバージョン文字列の決定順序
@@ -536,9 +543,9 @@ MSYSの自動変換が効くかどうかが変わることを意識する。
   （それぞれ5ファイル・8ファイル）。
 - ~~英語版ドキュメントは未作成。~~ **フェーズ⑤で整備済み**（`docs/spec/`・
   `docs/usage/`・`docs/examples/`・`docs/tour/`・ルート`README`すべて）。
-- ~~`release.yml` が未作成。~~ **フェーズ⑤で作成済み**
-  （`.github/workflows/release.yml`）。`v*`タグのpush自体はユーザーの
-  判断で行う（本プロジェクトの一貫した運用ルール）。
+- ~~`release.yml` が未作成。~~ **フェーズ⑤で作成済み、`v0.1.0`タグpushで
+  実地稼働も確認済み**（GitHub Releasesへの初回リリース公開に成功。
+  現在地参照）。
 - **`san-db-ox-clients`（各言語向けドライバ）は別リポジトリ。** 本リポジトリ
   では扱わない。本体側に残す接続テストはGoで書いたstdioクライアントのみ
   （`.claude/rules/testing.md`）。
