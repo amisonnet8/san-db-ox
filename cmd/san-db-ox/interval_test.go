@@ -4,11 +4,19 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/amisonnet8/san-db-ox/engine"
 )
+
+// periodicSnapshotName mirrors what startSnapshotInterval actually writes
+// for the extension-less base "periodic": snapshotFilename appends ".exe"
+// on windows (naming.md), so a bare "periodic" never appears there.
+func periodicSnapshotName() string {
+	return snapshotFilename("periodic", false, false, time.Time{}, runtime.GOOS)
+}
 
 func TestStartSnapshotIntervalZeroIsNoop(t *testing.T) {
 	db, err := engine.Open(filepath.Join(t.TempDir(), "missing"))
@@ -62,7 +70,7 @@ func TestStartSnapshotIntervalSavesPeriodically(t *testing.T) {
 
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		if _, err := os.Stat(filepath.Join(dir, "periodic")); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, periodicSnapshotName())); err == nil {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -110,14 +118,14 @@ func TestStartSnapshotIntervalStopBlocksUntilGoroutineExits(t *testing.T) {
 	if err := os.Chdir(dir2); err != nil {
 		t.Fatal(err)
 	}
-	info, statErr := os.Stat(filepath.Join(dir1, "periodic"))
+	info, statErr := os.Stat(filepath.Join(dir1, periodicSnapshotName()))
 	if statErr != nil {
 		t.Fatalf("expected at least one periodic snapshot to have been written before stop(): %v", statErr)
 	}
 	mtimeAtStop := info.ModTime()
 
 	time.Sleep(50 * time.Millisecond)
-	info2, err := os.Stat(filepath.Join(dir1, "periodic"))
+	info2, err := os.Stat(filepath.Join(dir1, periodicSnapshotName()))
 	if err != nil {
 		t.Fatalf("periodic snapshot disappeared: %v", err)
 	}

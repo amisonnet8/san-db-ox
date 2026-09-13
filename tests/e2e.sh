@@ -301,13 +301,46 @@ pass "--snapshot-interval: periodic background saves work in REPL mode"
 # (spec §13, interrupt.go). A real PTY is required, since a plain
 # pipe never generates a genuine SIGINT the way a terminal's line
 # discipline does for its INTR character (0x03) -- this check is skipped
-# if `script` (util-linux) isn't available (notably windows-latest). ---
+# if `script` isn't available (notably windows-latest).
+#
+# util-linux's script (Linux) and BSD's script (macOS) take the command
+# to run completely differently: util-linux wants it as one string via
+# -c and can echo its exit status back as script's own (-e); BSD's has
+# neither flag and instead takes the command as trailing argv after
+# file, with no way to recover the child's exit status from script
+# itself. RUNNER (a tiny generated shell script, run as the "command" in
+# both cases) sidesteps the difference entirely by writing the exit
+# status to STATUS_FILE itself, so both branches recover it the same
+# way.
+#
+# RUNNER must `trap '' INT`. Once it runs more than a single external
+# command (interrupt$EXE, then the echo that records its status), the
+# shell interpreting it no longer qualifies for the shell's "exec"
+# tail-call optimization -- unlike a bare one-liner passed straight to
+# `sh -c`, it stays alive as a real forked process sharing the pty's
+# foreground process group with interrupt$EXE. Confirmed by strace: the
+# Ctrl+C byte's SIGINT reaches that shell too, and its default
+# disposition kills it outright before the trailing `echo $?` line ever
+# runs -- interrupt$EXE's own SIGINT handling never gets a chance to
+# matter, because STATUS_FILE never gets written. Ignoring INT in the
+# wrapper shell (interrupt$EXE still gets and handles the signal itself,
+# untouched by its parent's trap) is what lets it survive to write the
+# status after interrupt$EXE actually exits. ---
 if command -v script >/dev/null 2>&1; then
   cp "$BIN" "$WORK/interrupt$EXE"
   chmod +x "$WORK/interrupt$EXE"
   RAW="$WORK/interrupt.raw"
   OUT="$WORK/interrupt.out"
+  STATUS_FILE="$WORK/interrupt.status"
+  RUNNER="$WORK/interrupt_runner.sh"
   : >"$RAW"
+  {
+    printf '#!/bin/sh\n'
+    printf "trap '' INT\n"
+    printf '"%s" -q\n' "$WORK/interrupt$EXE"
+    printf 'echo $? >"%s"\n' "$STATUS_FILE"
+  } >"$RUNNER"
+  chmod +x "$RUNNER"
   {
     printf 'CREATE TABLE t(a);\n'
     printf 'INSERT INTO t VALUES (1);\n'
@@ -325,13 +358,19 @@ if command -v script >/dev/null 2>&1; then
     sleep 0.1
     printf '\x03'
     sleep 0.5
-  } | { set +e; timeout 10 script -qec "$WORK/interrupt$EXE -q" "$RAW" >/dev/null 2>&1; echo $? >"$WORK/interrupt.status"; }
+  } | {
+    set +e
+    if [ "$(uname -s)" = "Darwin" ]; then
+      timeout 10 script -q "$RAW" "$RUNNER" >/dev/null 2>&1
+    else
+      timeout 10 script -qc "$RUNNER" "$RAW" >/dev/null 2>&1
+    fi
+  }
   # san-db-ox's own exit code (1 is expected: the two consecutive idle
-  # Ctrl+C presses force-quit) is captured to a file by the right-hand
-  # side of the pipe above, rather than read from "$?"/PIPESTATUS right
-  # after the pipeline -- see .claude/rules/testing.md's `set -e` /
-  # pipeline pitfalls for why.
-  status="$(cat "$WORK/interrupt.status")"
+  # Ctrl+C presses force-quit) is captured to a file by RUNNER itself
+  # rather than read from "$?"/PIPESTATUS right after the pipeline --
+  # see .claude/rules/testing.md's `set -e` / pipeline pitfalls for why.
+  status="$(cat "$STATUS_FILE")"
   tr -d '\r' <"$RAW" >"$OUT"
 
   grep -q 'context canceled' "$OUT" || fail "Ctrl+C during a long query did not cancel it (got: $(cat "$OUT"))"
