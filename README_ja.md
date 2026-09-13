@@ -125,6 +125,7 @@ TCP/UNIXソケット越しに使うことができる。その場合、以下の
 | [実例集](docs/examples/README_ja.md) | ユースケースごとの実践的なコマンド集 |
 | [起動オプション・REPLコマンド・stdioプロトコル](docs/usage/README_ja.md) | すぐ使うための索引的リファレンス |
 | [仕様書](docs/spec/san-db-ox_spec_ja.md) | 設計判断の理由まで踏み込んだ仕様書 |
+| [インタラクティブガイド](https://notebook.google.com/notebook/54a7599d-12a2-4bb5-a194-1bd3e1a4d426) | 対話形式で質問しながら調べられるGemini Notebook |
 
 ## ライセンス
 
