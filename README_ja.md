@@ -1,3 +1,5 @@
+*[English](README.md)*
+
 <div align="center">
 
 # SanDBox
@@ -12,8 +14,6 @@
 [![Go Version](https://img.shields.io/github/go-mod/go-version/amisonnet8/san-db-ox)](go.mod)
 
 ![テーブルを作成し、.overwriteで自分自身にデータを埋め込み、再起動後もSELECTでデータを読み出せることを示すデモ](docs/img/demo.gif)
-
-*[English](README.md)*
 
 </div>
 
