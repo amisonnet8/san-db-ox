@@ -47,7 +47,16 @@ jobs:
       # CGO_ENABLED=0 pure-Go cross-compilation, one ubuntu-latest
       # runner for all 6 combinations -- no per-OS runner or C compiler
       # needed (.claude/rules/distribution.md).
+      #
+      # Uses a step output (GITHUB_OUTPUT), not a $GITHUB_ENV variable, to
+      # hand the filename to the next step: a value set via $GITHUB_ENV is
+      # invisible to static analyzers (editors/linters flag
+      # `${{ env.ASSET_NAME }}` as "context access might be invalid" since
+      # they can't see what a run step writes into it at runtime), while
+      # `steps.<id>.outputs.<name>` is the pattern they're built to
+      # recognize.
       - name: Build
+        id: build
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -58,14 +67,14 @@ jobs:
           name="san-db-ox_${{ github.ref_name }}_${GOOS}_${GOARCH}${ext}"
           go build -ldflags "-X main.version=${{ github.ref_name }}" -o "$name" ./cmd/san-db-ox
           sha256sum "$name" > "$name.sha256"
-          echo "ASSET_NAME=$name" >> "$GITHUB_ENV"
+          echo "asset_name=$name" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ env.ASSET_NAME }}
+          name: ${{ steps.build.outputs.asset_name }}
           path: |
-            ${{ env.ASSET_NAME }}
-            ${{ env.ASSET_NAME }}.sha256
+            ${{ steps.build.outputs.asset_name }}
+            ${{ steps.build.outputs.asset_name }}.sha256
           if-no-files-found: error
 
   publish:

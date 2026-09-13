@@ -87,6 +87,16 @@ VCS管理下にあると自動的にVCS情報を埋め込むため。**`(devel)`
 - **リリース公開:** タグから直接リリースを作成し、生成されたバイナリ・
   チェックサムをアセットとしてアップロードする（リリースノートはコミット
   履歴から自動生成）。ドラフトではなく、タグpush時点で即座に公開する。
+- **ステップ間の値の受け渡しは`$GITHUB_OUTPUT`（`steps.<id>.outputs.<name>`）
+  を使い、`$GITHUB_ENV`（`env.<NAME>`）は避ける。** 実行時に`run:`ブロックが
+  動的に書き込む値である点はどちらも同じだが、エディタ・CIの静的解析
+  ツール（GitHub Actions拡張機能等）は`steps.<id>.outputs.<name>`パターンは
+  認識できても、`$GITHUB_ENV`経由で新規に定義された`env.<NAME>`は追跡できず
+  「Context access might be invalid」という誤検知の警告を出す
+  （`build`ジョブがクロスビルドしたアセット名を後続ステップへ渡す箇所で
+  実際に発生・確認済み）。実害は無い警告だが、`id: <step>`を振って
+  `echo "name=value" >> "$GITHUB_OUTPUT"`＋`steps.<step>.outputs.name`の形へ
+  書き換えるだけで解消できるため、最初からこちらを使う。
 
 ## READMEからのリンク
 
