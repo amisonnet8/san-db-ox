@@ -1,4 +1,4 @@
-*[English](ci-instant-test-db.md)*
+*[English](ci-instant-test-db.md) | **日本語***
 
 # CI/CDでのInstant Test DB
 

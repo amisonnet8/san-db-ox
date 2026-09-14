@@ -1,4 +1,4 @@
-*[English](repl-commands.md)*
+*[English](repl-commands.md) | **日本語***
 
 # REPLコマンド
 

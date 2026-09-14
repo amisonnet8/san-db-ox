@@ -1,4 +1,4 @@
-*[English](stdio-protocol.md)*
+*[English](stdio-protocol.md) | **日本語***
 
 # stdioプロトコル
 

@@ -1,4 +1,4 @@
-*[日本語](stdio-integration_ja.md)*
+*[日本語](stdio-integration_ja.md) | **English***
 
 # Embedding via stdio
 

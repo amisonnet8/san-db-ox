@@ -1,4 +1,4 @@
-*[日本語](sqlite-interop_ja.md)*
+*[日本語](sqlite-interop_ja.md) | **English***
 
 # Bridging to existing SQLite assets
 

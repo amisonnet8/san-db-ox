@@ -1,4 +1,4 @@
-*[English](executable-snapshots.md)*
+*[English](executable-snapshots.md) | **日本語***
 
 # 実行可能スナップショットでのバグ再現・共有
 

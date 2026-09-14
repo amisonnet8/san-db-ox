@@ -1,4 +1,4 @@
-*[English](sqlite-interop.md)*
+*[English](sqlite-interop.md) | **日本語***
 
 # 既存SQLite資産との橋渡し
 

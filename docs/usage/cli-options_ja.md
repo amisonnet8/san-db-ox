@@ -1,4 +1,4 @@
-*[English](cli-options.md)*
+*[English](cli-options.md) | **日本語***
 
 # 起動オプション
 

@@ -1,4 +1,4 @@
-*[English](san-db-ox_spec.md)*
+*[English](san-db-ox_spec.md) | **日本語***
 
 # 🗃️ SanDBox 仕様書
 

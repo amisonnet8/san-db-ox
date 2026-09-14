@@ -1,4 +1,4 @@
-*[日本語](cli-options_ja.md)*
+*[日本語](cli-options_ja.md) | **English***
 
 # CLI options
 

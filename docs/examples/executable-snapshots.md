@@ -1,4 +1,4 @@
-*[日本語](executable-snapshots_ja.md)*
+*[日本語](executable-snapshots_ja.md) | **English***
 
 # Sharing bugs as executable snapshots
 

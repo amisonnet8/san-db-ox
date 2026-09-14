@@ -1,4 +1,4 @@
-*[日本語](read-only-demo_ja.md)*
+*[日本語](read-only-demo_ja.md) | **English***
 
 # A temporary read-only demo
 

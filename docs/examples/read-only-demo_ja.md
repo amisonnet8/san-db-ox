@@ -1,4 +1,4 @@
-*[English](read-only-demo.md)*
+*[English](read-only-demo.md) | **日本語***
 
 # 閲覧用デモ環境の一時公開
 

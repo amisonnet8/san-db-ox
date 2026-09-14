@@ -1,4 +1,4 @@
-*[English](stdio-integration.md)*
+*[English](stdio-integration.md) | **日本語***
 
 # stdio経由での他プログラムへの結合
 
