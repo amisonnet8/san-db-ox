@@ -9,7 +9,7 @@
 > **What this document is:** a design/reference specification for developers and advanced users. It records **what is being built and how**, and **why it was decided that way**.
 >
 > * For a quick-reference index for "using it right now," see `docs/usage/` (the list of startup options, REPL commands, and stdio protocol ops).
-> * **Development rules** such as testing policy, development phases, distribution method, and naming conventions live under `.claude/rules/` and are not covered here.
+> * **Development rules** such as testing policy, development phases, distribution method, and naming conventions are out of scope for this document.
 > * Client drivers for each language are provided by a separate project, `san-db-ox-clients`. This document defines only **up through the protocol**.
 >
 > **This document is grown alongside the implementation; when the implementation and the spec drift apart, update this document.** When changing a design decision, update this document first, then start work.
@@ -140,7 +140,7 @@ The interactive console (REPL) can run dedicated control commands ("dot commands
 | `.exit [CODE]` / `.quit [CODE]` | Exit (no auto-save; exits immediately with no save-confirmation prompt either -- see §4. `CODE` omitted means a clean exit; given, the process exits immediately with that code) |
 | `.help` | Show the command list |
 | `.headers on\|off` | Whether to show column names in results |
-| `.mode MODE` | Output format. Only 5 are adopted: `list` (default, `\|`-separated, no header) / `column` (aligned column widths, auto-turns `.headers` on when switched to) / `csv` (RFC 4180, CRLF) / `json` (array) / `line` (one column per line) (decorative modes like `quote`/`insert`/`tabs`/`markdown`/`box`/`html` are not adopted, per the CLI output policy `.claude/rules/cli-output.md`). Value representation in JSON output is shared with §7. See the table below for its interaction with `.headers` |
+| `.mode MODE` | Output format. Only 5 are adopted: `list` (default, `\|`-separated, no header) / `column` (aligned column widths, auto-turns `.headers` on when switched to) / `csv` (RFC 4180, CRLF) / `json` (array) / `line` (one column per line) (decorative modes like `quote`/`insert`/`tabs`/`markdown`/`box`/`html` are not adopted). Value representation in JSON output is shared with §7. See the table below for its interaction with `.headers` |
 | `.import FILE TABLE` | Load a CSV file into a table. **Always reads as CSV regardless of the `.mode` setting** (`sqlite3` follows `.mode`, but this is deliberately simplified to "`.import` is always CSV" -- an intentional difference). If `TABLE` doesn't exist, it's `CREATE`d automatically with the first row as all-TEXT column names; if it exists, the first row is treated as data. **If a row's field count doesn't match the column count, the whole operation aborts with an error naming that row, inserting nothing** (`sqlite3` instead pads/truncates with a warning and continues, but for the primary use case of loading seed data, silently inserting distorted data was judged more harmful -- an intentional difference) |
 | `.dump [PATTERN]` | Dumps, as SQL statements, the schema and data of tables matching `PATTERN` (a SQL LIKE pattern; all tables if omitted), along with any indexes/views/triggers belonging to them. Literalizing values is deferred to SQLite's own `quote()` function |
 
@@ -454,7 +454,7 @@ Although SanDBox never listens on a network, **it's designed to be used over a n
 
 Dropping `fork` doesn't fix this either -- there's then only one child process and one database, but once that connection drops, `socat` itself exits and can't wait for the next one. In other words, **"keep one database running and serve multiple connections to it in turn" is simply not a shape this bolt-on-transport approach can produce.** This is an unavoidable limitation; if sharing is needed, the user has to write their own long-running app that launches and holds exactly one child process (that app is then the one providing the network side).
 
-**2. Multiple processes from the same binary start at the same time.** As a consequence of the above, it's an everyday occurrence for multiple processes to load the same executable simultaneously. That footer reads don't race, and that `.snapshot` run concurrently against the same path never leaves a corrupted file observable (§11's atomic writing), both need to hold under this premise. **Testing must cover this situation too** (`.claude/rules/testing.md`).
+**2. Multiple processes from the same binary start at the same time.** As a consequence of the above, it's an everyday occurrence for multiple processes to load the same executable simultaneously. That footer reads don't race, and that `.snapshot` run concurrently against the same path never leaves a corrupted file observable (§11's atomic writing), both need to hold under this premise. **Testing must cover this situation too.**
 
 Also worth noting: there is no authentication at all when published externally. Anyone who can reach it can run any SQL, DDL included, so it's meant to be paired with `--read-only` (§2). **The specific connection method and security configuration are out of scope for this document** and are covered in `san-db-ox-clients`'s documentation instead.
 
@@ -511,7 +511,7 @@ san-db-ox/
                              (REPL, batch execution, stdio protocol)
 ```
 
-The concrete file layout (`engine.go`, `persist.go`, `main.go`, `repl.go`, `stdio.go`, etc) is decided during implementation (see `.claude/rules/directory-structure.md` for details). This shows only the division of responsibility between the two directories.
+The concrete file layout (`engine.go`, `persist.go`, `main.go`, `repl.go`, `stdio.go`, etc) is decided during implementation. This shows only the division of responsibility between the two directories.
 
 ### Division of responsibility
 
@@ -762,7 +762,7 @@ Command-line arguments provide both a short flag (1 character) and a long flag. 
 
 **How the version string is decided:** the value `-v`/`--version` displays is decided by this priority order:
 
-1. **A release build**: the value embedded via `-ldflags -X main.version=<tag>` (see `release.yml`, `.claude/rules/distribution.md`).
+1. **A release build**: the value embedded via `-ldflags -X main.version=<tag>` (see `release.yml`).
 2. **If 1 gives nothing, and `runtime/debug`'s `ReadBuildInfo()` has a usable `Main.Version`**: use that value. This covers both installing via `go install <module>@<version>` (a path that can't receive `-ldflags`, so 1 can't catch it) and a local build (`go build`) inside a git repository -- as long as the checkout is committed (no untidy changes), the Go toolchain automatically embeds a pseudo-version derived from the commit (`vX.Y.Z-yyyymmddhhmmss-<commit>` form), which gets picked up here too. **A local build from a checkout with uncommitted (dirty) changes is excluded, though, and falls through to 3** -- `Main.Version` carries a `+dirty` suffix in that case, and accepting it would make a binary built from an undistributable state look like it were a real version (detected via the `vcs.modified` key in the `Settings` `ReadBuildInfo()` returns).
 3. **When neither of the above yields a value** (a build with `-buildvcs=false`, a dirty local build, a build outside any VCS, etc): fixed at `dev`.
 
@@ -871,7 +871,7 @@ Given `--snapshot-interval` (`-i`), a differently-named snapshot is automaticall
 
 The startup banner is shown only in REPL mode. It shows the version, and whether data is embedded / the snapshot name. Rather than a dedicated command like `.status`, this is consolidated into showing it once at startup. Given `-q`/`--quiet`, the whole banner is suppressed. Neither batch execution nor stdio mode ever shows it. The version string the banner shows is the result of §12's resolution order (a release build's `-ldflags` → `go install` build info → `dev`), the same value `-v`'s output and the stdio protocol's hello line (§7) return as `version`.
 
-**When stdin isn't an interactive terminal, none of the prompt, the continuation prompt, or the banner is shown at all, even when started in REPL mode.** This is switched via `isInteractive` (whether stdin is a terminal). This suppression is for non-interactive execution (§5, the implicit batch execution when stdin isn't a terminal), a judgment axis independent from `-q`/`--quiet` -- `-q` is an explicit user choice, whereas this one is decided automatically from the run environment. The same judgment is also used for whether to install the Ctrl+C signal handler (below, §2/`.claude/rules/cli-output.md`).
+**When stdin isn't an interactive terminal, none of the prompt, the continuation prompt, or the banner is shown at all, even when started in REPL mode.** This is switched via `isInteractive` (whether stdin is a terminal). This suppression is for non-interactive execution (§5, the implicit batch execution when stdin isn't a terminal), a judgment axis independent from `-q`/`--quiet` -- `-q` is an explicit user choice, whereas this one is decided automatically from the run environment. The same judgment is also used for whether to install the Ctrl+C signal handler (below, §2).
 
 **With data:**
 ```
