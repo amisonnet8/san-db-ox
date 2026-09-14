@@ -50,14 +50,25 @@ func newStdioTestSession(t *testing.T, db *engine.DB, opts *options) *stdioTestS
 
 func (s *stdioTestSession) readLine() map[string]any {
 	s.t.Helper()
+	v, _ := s.readLineRaw()
+	return v
+}
+
+// readLineRaw is readLine plus the line's raw text, for the rare
+// assertion that needs to see the literal JSON (e.g. a large integer,
+// where decoding through map[string]any's float64 dynamic typing would
+// itself introduce the precision loss the test is trying to rule out).
+func (s *stdioTestSession) readLineRaw() (map[string]any, string) {
+	s.t.Helper()
 	if !s.scanner.Scan() {
 		s.t.Fatalf("no more stdio output (scanner error: %v)", s.scanner.Err())
 	}
+	text := s.scanner.Text()
 	var v map[string]any
 	if err := json.Unmarshal(s.scanner.Bytes(), &v); err != nil {
-		s.t.Fatalf("invalid JSON line %q: %v", s.scanner.Text(), err)
+		s.t.Fatalf("invalid JSON line %q: %v", text, err)
 	}
-	return v
+	return v, text
 }
 
 func (s *stdioTestSession) send(req string) {
@@ -348,6 +359,103 @@ func TestRunStdioLoadMissingPathIsBadRequest(t *testing.T) {
 	errObj, _ := resp["error"].(map[string]any)
 	if resp["ok"] != false || errObj["code"] != "bad_request" {
 		t.Fatalf("load with no path = %v, want ok:false code:bad_request", resp)
+	}
+
+	s.inW.Close()
+	s.waitDone()
+}
+
+// TestRunStdioExecMissingSQLIsBadRequest guards against a regression of
+// the panic reported against v0.1.0: "exec" with no "sql" field used to
+// call res.RowsAffected() on a nil sql.Result (db.Exec("") succeeds with
+// a nil Result under modernc.org/sqlite) and crash the whole process. Per
+// spec §7's "必須パラメータの欠落は bad_request", a missing "sql" must be
+// rejected before ever reaching r.sess.Exec, and the connection must stay
+// alive afterward.
+func TestRunStdioExecMissingSQLIsBadRequest(t *testing.T) {
+	db := newTestDB(t)
+	s := newStdioTestSession(t, db, &options{})
+	s.readLine() // hello
+
+	s.send(`{"op":"exec"}`)
+	resp := s.readLine()
+	errObj, _ := resp["error"].(map[string]any)
+	if resp["ok"] != false || errObj["code"] != "bad_request" {
+		t.Fatalf("exec with no sql = %v, want ok:false code:bad_request", resp)
+	}
+
+	// The connection must still work afterward -- the whole point of
+	// bad_request over a crash.
+	s.send(`{"op":"query","sql":"SELECT 1"}`)
+	resp = s.readLine()
+	if resp["ok"] != true {
+		t.Fatalf("query after exec-missing-sql failed: %v", resp)
+	}
+
+	s.inW.Close()
+	s.waitDone()
+}
+
+// TestRunStdioQueryMissingSQLIsBadRequest is opExec's sibling check for
+// "query" -- spec §7's missing-required-parameter rule applies to both
+// ops in the table (both list "sql" as a parameter), even though "query"
+// with an empty sql string never crashed (it used to just run "" and
+// return an empty result set).
+func TestRunStdioQueryMissingSQLIsBadRequest(t *testing.T) {
+	db := newTestDB(t)
+	s := newStdioTestSession(t, db, &options{})
+	s.readLine() // hello
+
+	s.send(`{"op":"query"}`)
+	resp := s.readLine()
+	errObj, _ := resp["error"].(map[string]any)
+	if resp["ok"] != false || errObj["code"] != "bad_request" {
+		t.Fatalf("query with no sql = %v, want ok:false code:bad_request", resp)
+	}
+
+	s.inW.Close()
+	s.waitDone()
+}
+
+// TestRunStdioExecLargeIntegerParamRoundTripsExactly guards against a
+// regression of the second bug reported against v0.1.0: params were
+// decoded via plain json.Unmarshal (every JSON number -> float64), so an
+// INTEGER value outside float64's 2^53-1 exact range silently lost
+// precision and was stored as REAL instead of INTEGER. Spec §7 already
+// documents this round-trip symmetry for BLOBs; it must hold for large
+// integers too.
+func TestRunStdioExecLargeIntegerParamRoundTripsExactly(t *testing.T) {
+	db := newTestDB(t)
+	s := newStdioTestSession(t, db, &options{})
+	s.readLine() // hello
+
+	s.send(`{"op":"exec","sql":"CREATE TABLE big(n INTEGER)"}`)
+	if resp := s.readLine(); resp["ok"] != true {
+		t.Fatalf("CREATE failed: %v", resp)
+	}
+
+	s.send(`{"op":"exec","sql":"INSERT INTO big VALUES (?)","params":[9223372036854775807]}`)
+	if resp := s.readLine(); resp["ok"] != true {
+		t.Fatalf("INSERT failed: %v", resp)
+	}
+
+	s.send(`{"op":"query","sql":"SELECT n, typeof(n) FROM big"}`)
+	resp, raw := s.readLineRaw()
+	if resp["ok"] != true {
+		t.Fatalf("query failed: %v", resp)
+	}
+	// Decoding through map[string]any (readLine's plain json.Unmarshal)
+	// would itself round n through float64 and mask the exact bug this
+	// test guards against, so check the literal digits in the raw JSON
+	// line instead -- the same round-trip-exactness spec §7 already
+	// requires of the response encoding direction.
+	if !strings.Contains(raw, `[9223372036854775807,"integer"]`) {
+		t.Errorf("response line = %q, want it to contain the literal row [9223372036854775807,\"integer\"]", raw)
+	}
+	rows, _ := resp["rows"].([]any)
+	row, _ := rows[0].([]any)
+	if row[1] != "integer" {
+		t.Errorf("typeof(n) = %v, want \"integer\" (value must stay INTEGER, not be silently corrupted to REAL)", row[1])
 	}
 
 	s.inW.Close()

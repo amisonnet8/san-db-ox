@@ -43,16 +43,24 @@ func jsonValue(v any) (any, error) {
 }
 
 // sqlValue is jsonValue's inverse: it converts one value already decoded
-// from a stdio request's "params" array (encoding/json's own dynamic
-// typing for a json.Unmarshal into `any` -- nil/bool/float64/string/
-// []any/map[string]any) into a value database/sql accepts as a bind
-// parameter, per spec §7's value table ("`params` でも同じ表現を受け
-// 付ける"). Only jsonValue's own output shapes are accepted back:
+// from a stdio request's "params" array (via a json.Decoder with
+// UseNumber() enabled, stdio.go -- nil/bool/json.Number/string/[]any/
+// map[string]any) into a value database/sql accepts as a bind parameter,
+// per spec §7's value table ("`params` でも同じ表現を受け付ける"). Only
+// jsonValue's own output shapes are accepted back:
 //
 //   - null           -> nil                              (NULL)
-//   - a number (float64) -> passed through                (INTEGER or REAL, SQLite decides from the value)
+//   - a number (json.Number) -> int64 if it parses as one, else float64 (INTEGER or REAL)
 //   - a string       -> passed through                    (TEXT)
 //   - a 1-element array of a string -> base64-decoded []byte (BLOB)
+//
+// UseNumber() (rather than plain json.Unmarshal's default of decoding
+// every number as float64) is what makes the INTEGER case possible: a
+// float64 cannot round-trip SQLite's full 64-bit INTEGER range (only
+// 2^53-1, spec §7's known-constraints note for the *response* encoding
+// direction -- this is the same constraint applying to *requests*).
+// json.Number preserves the original digit string long enough for
+// Int64() to parse it exactly.
 //
 // Anything else (an object, a bool, an array that isn't exactly one
 // string) is a protocol violation and reported as bad_request by the
@@ -61,8 +69,15 @@ func sqlValue(v any) (any, error) {
 	switch x := v.(type) {
 	case nil:
 		return nil, nil
-	case float64:
-		return x, nil
+	case json.Number:
+		if i, err := x.Int64(); err == nil {
+			return i, nil
+		}
+		f, err := x.Float64()
+		if err != nil {
+			return nil, fmt.Errorf("invalid number %q: %w", x.String(), err)
+		}
+		return f, nil
 	case string:
 		return x, nil
 	case []any:

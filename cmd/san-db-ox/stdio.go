@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -68,7 +69,15 @@ func runStdio(db *engine.DB, self string, opts *options, in io.Reader, out, errw
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for scanner.Scan() {
 		var req stdioRequest
-		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
+		// UseNumber(), not plain json.Unmarshal: without it, every number
+		// in "params" decodes as float64, which cannot round-trip
+		// SQLite's full 64-bit INTEGER range (spec §7's known-constraints
+		// note) -- sqlValue (value.go) relies on getting json.Number here
+		// so it can bind large integers via Int64() without precision
+		// loss.
+		dec := json.NewDecoder(bytes.NewReader(scanner.Bytes()))
+		dec.UseNumber()
+		if err := dec.Decode(&req); err != nil {
 			writeLine(w, errResp(nil, "bad_request", err.Error()))
 			continue
 		}
@@ -201,6 +210,10 @@ func paramsToArgs(params []any) ([]any, error) {
 // via jsonValue (value.go), the same conversion ".mode json" uses
 // (format.go), so the two never diverge.
 func (r *repl) opQuery(req *stdioRequest) stdioResp {
+	if req.SQL == "" {
+		return errResp(req.ID, "bad_request", "missing required field: sql")
+	}
+
 	args, err := paramsToArgs(req.Params)
 	if err != nil {
 		return errResp(req.ID, "bad_request", err.Error())
@@ -249,6 +262,10 @@ func (r *repl) opQuery(req *stdioRequest) stdioResp {
 // そのまま送る") on r.sess and report the standard database/sql result
 // fields.
 func (r *repl) opExec(req *stdioRequest) stdioResp {
+	if req.SQL == "" {
+		return errResp(req.ID, "bad_request", "missing required field: sql")
+	}
+
 	args, err := paramsToArgs(req.Params)
 	if err != nil {
 		return errResp(req.ID, "bad_request", err.Error())
