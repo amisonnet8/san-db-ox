@@ -218,5 +218,5 @@ buffering. Use `jq --unbuffered` or `stdbuf -oL`.
 ## Drivers for each language
 
 Client drivers for C, Python, Go, and the like are provided by a separate
-project, `san-db-ox-clients`. This project provides only the protocol
-specification above.
+project, [`san-db-ox-clients`](https://github.com/amisonnet8/san-db-ox-clients).
+This project provides only the protocol specification above.

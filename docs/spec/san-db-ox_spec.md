@@ -10,7 +10,7 @@
 >
 > * For a quick-reference index for "using it right now," see `docs/usage/` (the list of startup options, REPL commands, and stdio protocol ops).
 > * **Development rules** such as testing policy, development phases, distribution method, and naming conventions are out of scope for this document.
-> * Client drivers for each language are provided by a separate project, `san-db-ox-clients`. This document defines only **up through the protocol**.
+> * Client drivers for each language are provided by a separate project, [`san-db-ox-clients`](https://github.com/amisonnet8/san-db-ox-clients). This document defines only **up through the protocol**.
 >
 > **This document is grown alongside the implementation; when the implementation and the spec drift apart, update this document.** When changing a design decision, update this document first, then start work.
 

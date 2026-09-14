@@ -128,6 +128,7 @@ if you do:
 | [Examples](docs/examples/README.md) | practical, task-oriented recipes |
 | [CLI options, REPL commands, stdio protocol](docs/usage/README.md) | a quick-reference index |
 | [Specification](docs/spec/san-db-ox_spec.md) | the design rationale behind it all |
+| [Client drivers](https://github.com/amisonnet8/san-db-ox-clients) | language bindings (C, Python, Go, ...) for the stdio protocol |
 | [Interactive guide](https://notebook.google.com/notebook/54a7599d-12a2-4bb5-a194-1bd3e1a4d426) | a Gemini Notebook you can ask questions in |
 
 ## License

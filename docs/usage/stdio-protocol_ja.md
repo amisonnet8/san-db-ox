@@ -210,5 +210,5 @@ wait "$DB_PID"
 ## 各言語向けドライバ
 
 C・Python・Go などのクライアントドライバは、別プロジェクト
-`san-db-ox-clients` で提供される。本プロジェクトが提供するのは、上記の
-プロトコル仕様までである。
+[`san-db-ox-clients`](https://github.com/amisonnet8/san-db-ox-clients) で
+提供される。本プロジェクトが提供するのは、上記のプロトコル仕様までである。
