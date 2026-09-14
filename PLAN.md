@@ -202,6 +202,22 @@ v0.1.0](https://github.com/amisonnet8/san-db-ox/releases/tag/v0.1.0)に
 約10〜11MB、`binary-size.md`の想定レンジ通り）。README各所の
 `/releases/latest`リンクもこれで実体を持つ。
 
+**リリース後の保守: `san-db-ox-clients` 側のconformanceスイートが
+`v0.1.0`バイナリに対して見つけたstdioプロトコルのバグ2件を修正
+（[Issue #1](https://github.com/amisonnet8/san-db-ox/issues/1)、
+コミット`8e6ac2c`・`9e2ddea`）。** (1) `exec`に`sql`が無いと
+`db.Exec("")`がnilの`sql.Result`を返し、`opExec`が無条件で
+`.RowsAffected()`を呼んでプロセス全体がpanicしていた——`exec`/`query`
+双方に`sql`必須チェックを追加し`bad_request`を返すよう修正
+（仕様書§7「必須パラメータの欠落はbad_request」）。(2) `params`が
+`json.Decoder.UseNumber()`無しでデコードされていたため、
+`2^53-1`を超える整数が`float64`精度に落ちてSQLite側の型まで
+INTEGERからREALへ書き換わる、というサイレントなデータ破損が
+あった——`sqlValue`（value.go）を`json.Number`対応に修正。
+回帰テストは`cmd/san-db-ox/stdio_test.go`に追加済み、`make test`
+green。**`san-db-ox-clients`側のconformanceスイートが green
+になるまでIssue #1はopenのまま**（クローズはそちらの確認後）。
+
 ### フェーズ⑤の進捗
 
 - **Step 0（仕様書の更新）**: §12へバージョン文字列の決定順序
