@@ -215,8 +215,10 @@ v0.1.0](https://github.com/amisonnet8/san-db-ox/releases/tag/v0.1.0)に
 INTEGERからREALへ書き換わる、というサイレントなデータ破損が
 あった——`sqlValue`（value.go）を`json.Number`対応に修正。
 回帰テストは`cmd/san-db-ox/stdio_test.go`に追加済み、`make test`
-green。**`san-db-ox-clients`側のconformanceスイートが green
-になるまでIssue #1はopenのまま**（クローズはそちらの確認後）。
+green。**`v0.1.1`としてリリース済み**（タグpush→`release.yml`で
+6アセット公開）。`san-db-ox-clients`側のconformanceスイートが
+`v0.1.1`バイナリに対して独立に両修正を確認（`error-codes.json`・
+`params-large-integer-roundtrip.json`）し、Issue #1はクローズ済み。
 
 ### フェーズ⑤の進捗
 
